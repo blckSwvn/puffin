@@ -1,9 +1,11 @@
 mod screen;
 mod storage;
+mod layout;
+pub use layout::{Rect, Direction};
 pub use storage::*;
 use storage::{
     widgets::Widgets,
-    nodes::{Nodes, Lidx, Sidx, Nidx, FOCUS, ROOT}
+    nodes::{Nodes, Lidx, Nidx, FOCUS, ROOT}
 };
 
 pub use screen::{ScreenBuffer, Cell};
@@ -19,8 +21,6 @@ pub trait Widget<Ctx, Cmd> {
         ctx: &mut Ctx,
     ) -> Option<Cmd>;
 }
-mod layout;
-pub use layout::*;
 
 pub struct Ui<C, E>{
     pub focus:Lidx,

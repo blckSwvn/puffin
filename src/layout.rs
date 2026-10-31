@@ -26,7 +26,7 @@ mod leaf{
         pub parent: Sidx,
         pub w: Widx,
         pub r: Rect,
-        pub c: Bounds,
+        pub b: Bounds,
     }
     impl TryFrom<super::Bounds> for Bounds{
         type Error = &'static str;
@@ -78,8 +78,9 @@ pub enum Direction {
 
 #[derive(PartialEq)]
 pub struct Split {
+
     pub parent: Option<Sidx>,
-    pub focus: u8,
+    pub focus: u16,
     pub children: Vec<Nidx>, //children cannot be left empty hard invariant
     pub direction: Direction,
     pub r: Rect,
@@ -269,7 +270,7 @@ impl Nodes{
             };
             self[p].children.retain(|c| *c != Nidx::L(*f));
             self[p].focus = if self[p].children.len() == 0 { 0 }else{
-                self[p].focus.min((self[p].children.len() - 1) as u8)
+                self[p].focus.min((self[p].children.len() - 1) as u16)
             };
             w.remove(self[*f].w);
             let s = self.prune(*f);
@@ -313,7 +314,7 @@ impl Nodes{
                     0 => {
                         n[pp].children.retain(|c| *c != Nidx::S(p));
                         n[pp].focus = if n[pp].children.len() == 0 { 0 } else {
-                            u8::min(n[pp].focus, (n[pp].children.len() - 1) as u8)
+                            u16::min(n[pp].focus, (n[pp].children.len() - 1) as u16)
                         };
                         n.s.remove(p);
                         prune(n, Nidx::S(pp))
@@ -358,7 +359,7 @@ impl Nodes{
                         FocusDirection::Down => cr.y >= r.y + r.h,
                     };
                     if found {
-                        self[curr].focus = i as u8;
+                        self[curr].focus = i as u16;
                         break 'search c;
                     }
                 }
@@ -376,7 +377,7 @@ impl Nodes{
                     }
                     Nidx::S(s) => {
                         let children = &self[s].children;
-                        let f = self[s].focus.min((children.len() as u8) - 1);
+                        let f = self[s].focus.min((children.len() as u16) - 1);
                         target = children[f as usize];
                     }
                 }

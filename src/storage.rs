@@ -1,89 +1,160 @@
-    mod fvec{
-        use std::marker::PhantomData;
-        #[derive(PartialEq)]
-        pub struct Idx<T>{
-            i:u16,
-            m:PhantomData<fn()->T>,
-        }
-        impl<T> Idx<T>{
-            //shall only be used for ROOT and initial focus
-            pub const fn new(i:u16)->Self{ Self{i, m:PhantomData} }
-        }
-        impl<T> Copy for Idx<T>{}
-        impl<T> Clone for Idx<T>{ fn clone(&self)-> Self{ *self } }
-
-        pub struct Fvec<T>{
-            used:Vec<Option<T>>,
-            free:Vec<Idx<T>>,
-        }
-        use std::ops::{Index, IndexMut};
-        impl<T> Index<Idx<T>> for Fvec<T>{
-            type Output = T;
-            fn index(&self, i:Idx<T>)->&T{
-                self.used[i.i as usize].as_ref().unwrap()
-            }
-        }
-        impl<T> IndexMut<Idx<T>> for Fvec<T> {
-            fn index_mut(&mut self, i:Idx<T>)->&mut T{
-                self.used[i.i as usize].as_mut().unwrap()
-            }
-        }
-        impl<T> Fvec<T>{
-            pub fn new()->Self{Self{used:vec![], free:vec![]}}
-            pub fn insert(&mut self, t:T)->Idx<T>{
-                if let Some(i) = self.free.pop(){
-                    self.used[i.i as usize] = Some(t);
-                    i
-                }else{
-                    let i = self.used.len();
-                    self.used.push(Some(t));
-                    Idx { i:i as u16, m: PhantomData }
-                }
-            }
-            pub fn remove(&mut self, i:Idx<T>)->T{
-                self.free.push(i);
-                self.used[i.i as usize].take().unwrap()
-            }
+mod fvec{ //freelist vec
+    use std::marker::PhantomData;
+    #[derive(PartialEq)]
+    pub struct Idx<T>{
+        i:u16,
+        m:PhantomData<fn()->T>,
+        #[cfg(debug_assertions)]
+        generation:u16,
+    }
+    impl<T> Idx<T>{
+        //shall only be used for ROOT and initial focus
+        pub const fn new(i:u16)->Self{
+            Self{
+                i, m:PhantomData,
+                generation:0,
+            } 
         }
     }
+    impl<T> Copy for Idx<T>{}
+    impl<T> Clone for Idx<T>{ fn clone(&self)-> Self{ *self } }
+
+    struct Slot<T>{
+        val:Option<T>,
+        #[cfg(debug_assertions)]
+        generation:u16,
+    }
+    pub struct Fvec<T>{
+        used:Vec<Slot<T>>,
+        free:Vec<u16>,
+    }
+    use std::ops::{Index, IndexMut};
+    impl<T> Index<Idx<T>> for Fvec<T>{
+        type Output = T;
+        fn index(&self, i:Idx<T>)->&T{
+            let slot = &self.used[i.i as usize];
+            #[cfg(debug_assertions)]
+            assert_eq!(slot.generation, i.generation, "Stale fvec index");
+            slot.val.as_ref().unwrap()
+        }
+    }
+    impl<T> IndexMut<Idx<T>> for Fvec<T> {
+        fn index_mut(&mut self, i:Idx<T>)->&mut T{
+            let slot = &mut self.used[i.i as usize];
+            assert_eq!(slot.generation, i.generation, "Stale fvec index");
+            slot.val.as_mut().unwrap()
+        }
+    }
+    impl<T> Fvec<T>{
+        pub fn new()->Self{Self{used:vec![], free:vec![]}}
+        pub fn insert(&mut self, t:T)->Idx<T>{
+            if let Some(i) = self.free.pop(){
+                let slot = &mut self.used[i as usize];
+                slot.val = Some(t);
+                Idx{
+                    i,
+                    #[cfg(debug_assertions)]
+                    generation:slot.generation,
+                    m:PhantomData,
+                }
+            }else{
+                let i = self.used.len();
+                self.used.push(Slot{
+                    val:Some(t),
+                    #[cfg(debug_assertions)]
+                    generation:0,
+                });
+                Idx{i:i as u16, m:PhantomData, generation:0}
+            }
+        }
+        pub fn remove(&mut self, i:Idx<T>)->T{
+            let slot = &mut self.used[i.i as usize];
+            let val = slot.val.take().unwrap();
+            #[cfg(debug_assertions)]{
+                assert_eq!(slot.generation, i.generation, "Stale fvec index");
+                slot.generation = slot.generation.wrapping_add(1);
+            }
+            self.free.push(i.i);
+            val
+        }
+    }
+}
 
 pub mod widgets{
     use crate::Widget;
+#[derive(PartialEq, Clone, Copy)]
+    pub struct Widx{
+        i:u16,
+        #[cfg(debug_assertions)]
+        generation:u16,
+    }
+    struct Slot<C, E>{
+        widget:Option<Box<dyn Widget<C, E>>>,
+        #[cfg(debug_assertions)]
+        generation:u16,
+    }
     pub struct Widgets<C, E>{
-        w:Vec<Option<Box<dyn Widget<C, E>>>>,
-        free:Vec<Widx>,
+        w:Vec<Slot<C, E>>,
+        free:Vec<u16>,
     }
     impl<C, E> Widgets<C, E>{
         pub fn new()->Self{Self{w:vec![], free:vec![]}}
         pub fn insert(&mut self, w:Box<dyn Widget<C, E>>)->Widx{
-            if let Some(f) = self.free.pop(){
-                self.w[f.0 as usize] = Some(w);
-                f
+            if let Some(i) = self.free.pop(){
+                let slot = &mut self.w[i as usize];
+                slot.widget = Some(w);
+                Widx{
+                    i,
+                    #[cfg(debug_assertions)]
+                    generation:slot.generation,
+                }
             }else{
-                let i = self.w.len();
-                self.w.push(Some(w));
-                Widx(i as u16)
+                let i = self.w.len() as u16;
+                self.w.push(Slot{
+                    widget:Some(w),
+                    #[cfg(debug_assertions)]
+                    generation:0,
+                });
+                Widx{
+                    i,
+                    #[cfg(debug_assertions)]
+                    generation:0,
+                }
             }
         }
-        pub fn remove(&mut self, w:Widx)->Box<dyn Widget<C, E>>{
-            self.free.push(w);
-            self.w[w.0 as usize].take().unwrap()
+        pub fn remove(&mut self, w: Widx) -> Box<dyn Widget<C, E>> {
+            let slot = &mut self.w[w.i as usize];
+            #[cfg(debug_assertions)]
+            assert_eq!( slot.generation, w.generation, "Stale widget index!");
+            let widget = slot.widget.take().expect("remove on freed widget");
+            #[cfg(debug_assertions)]{
+                slot.generation = slot.generation.wrapping_add(1);
+            }
+            self.free.push(w.i);
+            widget
         }
-        pub fn replace(&mut self, w:Widx, widget:Box<dyn Widget<C, E>>)->Box<dyn Widget<C, E>>{
-            std::mem::replace(&mut self.w[w.0 as usize].as_mut().unwrap(), widget)
+        pub fn replace(&mut self, i:Widx, widget:Box<dyn Widget<C, E>>)->Box<dyn Widget<C, E>>{
+            let slot = &mut self.w[i.i as usize];
+            #[cfg(debug_assertions)]
+            assert_eq!(slot.generation, i.generation, "Stale Widx index");
+            std::mem::replace(slot.widget.as_mut().unwrap(), widget)
         }
     }
-#[derive(PartialEq, Clone, Copy)]
-    pub struct Widx(u16);
     impl<C, E> std::ops::Index<Widx> for Widgets<C, E>{
         type Output = Box<dyn Widget<C, E>>;
         fn index(&self, i:Widx)->&Self::Output{
-            self.w[i.0 as usize].as_ref().expect("index on freed widget")
+            let slot = &self.w[i.i as usize];
+            #[cfg(debug_assertions)]
+            assert_eq!( slot.generation, i.generation, "Stale Widx index");
+            slot.widget.as_ref().unwrap()
         }
     }
     impl<C, E> std::ops::IndexMut<Widx> for Widgets<C, E>{
         fn index_mut(&mut self, i:Widx)->&mut Self::Output{
-            self.w[i.0 as usize].as_mut().expect("index mut on freed widget")
+            let slot = &mut self.w[i.i as usize];
+            #[cfg(debug_assertions)]
+            assert_eq!(slot.generation, i.generation, "Stale Widx index");
+            slot.widget.as_mut().unwrap()
         }
     }
 
@@ -100,7 +171,7 @@ pub mod nodes{
         Bounds, Bound,
         Direction,
     };
-    use super::super::Widget as W;
+    use crate::Widget as W;
 
     pub struct Nodes{
         pub l:Fvec<L>,
@@ -164,7 +235,7 @@ pub mod nodes{
         pub fn bounds(self, n:&Nodes)->Bounds{
             match self{
                 Self::S(s)=>n[s].b,
-                Self::L(l)=>n[l].c.into(),
+                Self::L(l)=>n[l].b.into(),
             }
         }
     }
@@ -173,7 +244,7 @@ pub mod nodes{
             let (mut l, mut s) = (Fvec::new(), Fvec::new());
             let wi = widgets.insert(Box::new(widget));
             let li = l.insert(L{parent:ROOT, r:Rect::ZERO, w:wi, 
-                c:Bounds{
+                b:Bounds{
                     min_w:Bound::Absolute(0),
                     min_h:Bound::Absolute(0),
                     max_w:Bound::Relative(1.0),
@@ -197,7 +268,7 @@ pub mod nodes{
     impl L{
         pub fn add<C, E>(n: &mut Nodes, w:&mut Widgets<C, E>, parent:Sidx, k:Box<dyn W<C, E>>, c:Bounds)->Lidx{
             let w = w.insert(k);
-            let lidx = n.l.insert(Self{parent, r:Rect::ZERO, w, c:c.try_into().unwrap()});
+            let lidx = n.l.insert(Self{parent, r:Rect::ZERO, w, b:c.try_into().unwrap()});
             n[parent].children.push(lidx.into());
             lidx
         }
@@ -242,7 +313,7 @@ pub mod nodes{
             let s = n.s.insert(S{parent:p.into(), focus:0, direction, r:Rect::ZERO, children:vec![], b:split_c});
             n[p].children.push(s.into());
             let w = ws.insert(w);
-            let lidx = n.l.insert(L{parent:s, r:Rect::ZERO, w, c:leaf_c.try_into().unwrap()});
+            let lidx = n.l.insert(L{parent:s, r:Rect::ZERO, w, b:leaf_c.try_into().unwrap()});
             n[s].children.push(lidx.into());
             n.recalc(p);
             (lidx, s)
