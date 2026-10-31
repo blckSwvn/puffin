@@ -130,257 +130,248 @@ impl Rect {
 }
 
 impl Nodes{
-        fn recalc_size(&mut self, i:Sidx)->Sidx{
-            let (d, p_r, b) = {let Split{direction:d, r, b, ..} = self[i]; (d, r, b)};
-            let min_h = |i: Nidx, n:&Nodes|->u16{
-                match i.bounds(n).min_h{
-                    Bound::Fit => i.r(n).h,
-                    Bound::Absolute(a) => a,
-                    Bound::Relative(a) => (a * p_r.h as f32) as u16,
-                }
-            };
-            let max_h = |i: Nidx, n:&Nodes|->u16{
-                match i.bounds(n).max_h{
-                    Bound::Fit => i.r(n).h,
-                    Bound::Absolute(a) => a,
-                    Bound::Relative(a) => (a * p_r.h as f32) as u16,
-                }
-            };
-            let min_w = |i: Nidx, n:&Nodes|->u16{
-                match i.bounds(n).min_w{
-                    Bound::Fit => i.r(n).w,
-                    Bound::Absolute(a) => a,
-                    Bound::Relative(a) => (a * p_r.w as f32) as u16,
-                }
-            };
-            let max_w = |i: Nidx, n:&Nodes|->u16{
-                match i.bounds(n).max_w{
-                    Bound::Fit => i.r(n).w,
-                    Bound::Absolute(a) => a,
-                    Bound::Relative(a) => (a * p_r.w as f32) as u16,
-                }
-            };
-            let mut left = match d{
-                Direction::Vertical   => p_r.h, 
-                Direction::Horizontal => p_r.w,
-            };
-            let mut resize: Vec<_> = self[i].children.iter().map(|x| Some(*x)).collect();
-            let (mut w, mut h) = (0, 0);
-            for child in resize.iter(){
-                let child = child.unwrap();
-                let (min_h, max_h, min_w, max_w) = (min_h(child, self), max_h(child, self), min_w(child, self), max_w(child, self));
-                let c_r = child.r_mut(self);
-                        match d{
-                            Direction::Horizontal => {
-                                left -= min_w;
-                                w += min_w;
-                                h = h.max(min_h);
-                                c_r.w = min_w;
-                                c_r.h = max_h.min(p_r.h);
-                            }
-                            Direction::Vertical  => {
-                                left -= min_h;
-                                h += min_h;
-                                w = w.max(min_w);
-                                c_r.h = min_h;
-                                c_r.w = max_w.min(p_r.w);
-                            }
-                        }
-            }
-            if let Bound::Fit = self[i].b.min_w{
-                self[i].r.w = w;
-            }
-            if let Bound::Fit = self[i].b.min_h{
-                self[i].r.h = h;
-            }
-            if let Bound::Fit = self[i].b.max_w{
-                self[i].r.w = w;
-            }
-            if let Bound::Fit = self[i].b.max_h{
-                self[i].r.h = h;
-            }
-            if ![b.min_w, b.max_w, b.min_h, b.max_h].iter().any(|x| matches!(x, Bound::Fit)){
-                while left > 0 && !resize.is_empty(){
-                    let len = resize.iter().filter(|x| x.is_some()).count() as u16;
-                    if len == 0{break};
-                    let per = left / len;
-                    let rem = left % len;
-                    let mut used = 0;
-                    for (i, child) in resize.iter_mut().enumerate(){
-                        let Some(c) = child else {continue};
-                        let (size, max) = match d{
-                            Direction::Vertical  => ( c.r(self).h, max_h(*c, self)),
-                            Direction::Horizontal=> ( c.r(self).w, max_w(*c, self)),
-                        };
-                        if max < size{panic!()}
-                        let add = (per + u16::from((i as u16) < rem)).min(max.saturating_sub(size));
-                        match d{
-                            Direction::Horizontal => c.r_mut(self).w += add,
-                            Direction::Vertical   => c.r_mut(self).h += add,
-                        }
-                        used += add;
-                        if size + add >= max{
-                            *child = None;
-                        }
+    fn bottom_pass(&mut self, i:Sidx)->Sidx{
+        let (c, d) = {let Split{direction:d, children:c, ..} = &mut self[i]; (std::mem::take(c), *d)};
+        let (mut w, mut h) = (0, 0);
+        for c in c.iter(){
+            match d{
+                Direction::Horizontal => {
+                    match c.bounds(self).min_w{
+                        Bound::Absolute(a) => w += a,
+                        Bound::Fit         => w += c.r(self).w,
+                        Bound::Relative(_) => {}
                     }
-                    left -= used;
-                    if used == 0 {break;}
-                    let c = std::mem::take(&mut self[i].children);
-                    for c in c.iter(){
-                        if let Nidx::S(c) = c{
-                            self.recalc_size(*c);
-                        }
+                    match c.bounds(self).min_h{
+                        Bound::Absolute(a) => h = h.max(a),
+                        Bound::Fit         => h = h.max(c.r(self).h),
+                        Bound::Relative(_) => {}
                     }
-                    self[i].children = c;
                 }
-                i
-            }else{
-                if let Some(p) = self[i].parent{
-                    self.recalc_size(p)
-                }else{
-                    i
+                Direction::Vertical => {
+                    match c.bounds(self).min_h{
+                        Bound::Absolute(a) => h += a,
+                        Bound::Fit         => h += c.r(self).h,
+                        Bound::Relative(_) => {} 
+                    }
+                    match c.bounds(self).min_w{
+                        Bound::Absolute(a) => w = w.max(a),
+                        Bound::Fit         => w = w.max(c.r(self).w),
+                        Bound::Relative(_) => {},
+                    }
                 }
             }
         }
-        fn recalc_pos(&mut self, i:Sidx){
-            let (c, d, mut r) = {let Split{children:c, direction:d, r, ..} = &mut self[i]; (std::mem::take(c), *d, *r)};
-            for c in c.iter(){
-                c.r_mut(self).x = r.x;
-                c.r_mut(self).y = r.y;
+        if let Bound::Fit = self[i].b.min_w{
+            self[i].r.w = w;
+        }
+        if let Bound::Fit = self[i].b.max_w{
+            self[i].r.w = w;
+        }
+        if let Bound::Fit = self[i].b.min_h{
+            self[i].r.h = h;
+        }
+        if let Bound::Fit = self[i].b.max_h{
+            self[i].r.h = h;
+        }
+        self[i].children = c;
+        if let Some(p) = self[i].parent{
+            self.bottom_pass(p)
+        }else{
+            i
+        }
+    }
+    fn top_pass(&mut self, i:Sidx){
+        let (c, d, r) = {
+        let Split{children:c, direction:d, r, ..} = &mut self[i];
+        (std::mem::take(c), *d, *r)
+        };
+        let mut left = match d{
+            Direction::Vertical => r.h,
+            Direction::Horizontal => r.w,
+        };
+        let mut resize: Vec<_> = c.iter().map(|x| Some(*x)).collect();
+        while left > 0 && !resize.is_empty(){
+            let len = resize.iter().filter(|x| x.is_some()).count() as u16;
+            if len == 0{break};
+            let per = left / len;
+            let mut rem = left % len;
+            let mut used = 0;
+            for child in resize.iter_mut(){
+                let Some(c) = child else {continue};
+                let (size, max) = match d{
+                    Direction::Horizontal => (c.r(self).w, match c.bounds(self).max_w{
+                        Bound::Absolute(x) => x,
+                        Bound::Fit => c.r(self).w,
+                        Bound::Relative(x) => (x * r.w as f32) as u16,
+                    }),
+                    Direction::Vertical   => (c.r(self).h, match c.bounds(self).max_h{
+                        Bound::Absolute(x) => x,
+                        Bound::Fit => c.r(self).h,
+                        Bound::Relative(x) => (x * r.h as f32) as u16,
+                    }),
+                };
+                let add = 
+                    (per + if rem > 0{rem -= 1; 1}else{0})
+                    .min(max.saturating_sub(size));
                 match d{
-                    Direction::Horizontal => r.x += c.r(self).w,
-                    Direction::Vertical   => r.y += c.r(self).h,
+                    Direction::Vertical   => c.r_mut(self).h += add,
+                    Direction::Horizontal => c.r_mut(self).w += add,
+                }
+                used += add;
+                if size + add >= max{
+                    *child = None;
                 }
             }
-            for c in c.iter(){
-                if let Nidx::S(c) = c{
-                    self.recalc_pos(*c);
+            left -= used;
+            if used == 0 {break}
+        }
+                for c in c.iter(){
+                    if let Nidx::S(c) = c{
+                        self.top_pass(*c);
+                    }
                 }
+                self[i].children = c;
+    }
+    fn recalc_pos(&mut self, i:Sidx){
+        let (c, d, mut r) = {let Split{children:c, direction:d, r, ..} = &mut self[i]; (std::mem::take(c), *d, *r)};
+        for c in c.iter(){
+            c.r_mut(self).x = r.x;
+            c.r_mut(self).y = r.y;
+            match d{
+                Direction::Horizontal => r.x += c.r(self).w,
+                Direction::Vertical   => r.y += c.r(self).h,
             }
-            self[i].children = c;
         }
-        pub fn recalc(&mut self, i: Sidx) {
-            let i = self.recalc_size(i);
-            self.recalc_pos(i);
+        for c in c.iter(){
+            if let Nidx::S(c) = c{
+                self.recalc_pos(*c);
+            }
         }
-        pub fn close<C, E>(&mut self, w:&mut Widgets<C, E>, f:&mut Lidx){
-            let p = self[*f].parent;
-            if self[p].parent.is_none() && self[p].children.len() <= 1 {
-                return;
+        self[i].children = c;
+    }
+    pub fn recalc(&mut self, i: Sidx) {
+        let i = self.bottom_pass(i);
+        self.top_pass(i);
+        self.recalc_pos(i);
+    }
+    pub fn close<C, E>(&mut self, w:&mut Widgets<C, E>, f:&mut Lidx){
+        let p = self[*f].parent;
+        if self[p].parent.is_none() && self[p].children.len() <= 1 {
+            return;
+        };
+        self[p].children.retain(|c| *c != Nidx::L(*f));
+        self[p].focus = if self[p].children.len() == 0 { 0 }else{
+            self[p].focus.min((self[p].children.len() - 1) as u16)
+        };
+        w.remove(self[*f].w);
+        let s = self.prune(*f);
+        self.l.remove(*f);
+        self.recalc(s);
+
+        let mut s = s.into();
+        loop{
+            s = match s {
+                Nidx::S(s) => self[s].children[self[s].focus as usize],
+                _ => break,
             };
-            self[p].children.retain(|c| *c != Nidx::L(*f));
-            self[p].focus = if self[p].children.len() == 0 { 0 }else{
-                self[p].focus.min((self[p].children.len() - 1) as u16)
+        }
+        let Nidx::L(s) = s else {unreachable!()};
+        *f = s;
+    }
+    fn prune(&mut self, i: Lidx) -> Sidx{
+        fn prune(n: &mut Nodes, i: Nidx) -> Sidx{
+            let p = match i {
+                Nidx::L(i) => n[i].parent,
+                Nidx::S(i) => match n[i].parent {
+                    Some(s) => s,
+                    _ => i,
+                },
             };
-            w.remove(self[*f].w);
-            let s = self.prune(*f);
-            self.l.remove(*f);
-            self.recalc(s);
-
-            let mut s = s.into();
-            loop{
-                s = match s {
-                    Nidx::S(s) => self[s].children[self[s].focus as usize],
-                    _ => break,
-                };
-            }
-            let Nidx::L(s) = s else {unreachable!()};
-            *f = s;
-        }
-        fn prune(&mut self, i: Lidx) -> Sidx{
-            fn prune(n: &mut Nodes, i: Nidx) -> Sidx{
-                let p = match i {
-                    Nidx::L(i) => n[i].parent,
-                    Nidx::S(i) => match n[i].parent {
-                        Some(s) => s,
-                        _ => i,
-                    },
-                };
-                let Some(pp) = n[p].parent else { return p };
-                match n[p].children.len() {
-                    1 => {
-                        let x = n[p].children[0];
-                        let i = n[pp].children.iter()
-                            .position(|c| *c == Nidx::S(p))
-                            .unwrap();
-                        n[pp].children[i] = x;
-                        match x {
-                            Nidx::S(i) => n[i].parent = Some(pp),
-                            Nidx::L(i) => n[i].parent = pp,
-                        }
-                        n.s.remove(p);
-                        prune(n, Nidx::S(pp))
+            let Some(pp) = n[p].parent else { return p };
+            match n[p].children.len() {
+                1 => {
+                    let x = n[p].children[0];
+                    let i = n[pp].children.iter()
+                        .position(|c| *c == Nidx::S(p))
+                        .unwrap();
+                    n[pp].children[i] = x;
+                    match x {
+                        Nidx::S(i) => n[i].parent = Some(pp),
+                        Nidx::L(i) => n[i].parent = pp,
                     }
-                    0 => {
-                        n[pp].children.retain(|c| *c != Nidx::S(p));
-                        n[pp].focus = if n[pp].children.len() == 0 { 0 } else {
-                            u16::min(n[pp].focus, (n[pp].children.len() - 1) as u16)
-                        };
-                        n.s.remove(p);
-                        prune(n, Nidx::S(pp))
-                    }
-                    _ => {
-                        n.recalc(p);
-                        return p;
-                    }
+                    n.s.remove(p);
+                    prune(n, Nidx::S(pp))
                 }
-            }
-            prune(self, i.into())
-        }
-        pub fn resize(&mut self, w: u16, h: u16) {
-            self[ROOT].r = Rect { w, h, x: 0, y: 0 };
-            self.recalc(ROOT);
-        }
-        pub fn focus(&mut self, f: &mut Lidx, d: FocusDirection){
-            let r = self[*f].r;
-            let mut curr = self[*f].parent;
-
-            let target = 'search: loop {
-                let (parent, len) = {
-                    let s = &self[curr];
-                    (s.parent, s.children.len())
-                };
-
-                let forward = matches!(d, FocusDirection::Right | FocusDirection::Down);
-                for j in 0..len {
-                    let i = if forward { j } else { len - 1 - j };
-                    let c = self[curr].children[i];
-                    if matches!(c, Nidx::L(x) if x == *f) {
-                        continue;
-                    }
-                    let cr = match c {
-                        Nidx::L(x) => self[x].r,
-                        Nidx::S(x) => self[x].r,
+                0 => {
+                    n[pp].children.retain(|c| *c != Nidx::S(p));
+                    n[pp].focus = if n[pp].children.len() == 0 { 0 } else {
+                        u16::min(n[pp].focus, (n[pp].children.len() - 1) as u16)
                     };
-                    let found = match d {
-                        FocusDirection::Left => cr.x + cr.w <= r.x,
-                        FocusDirection::Right => cr.x >= r.x + r.w,
-                        FocusDirection::Up => cr.y + cr.h <= r.y,
-                        FocusDirection::Down => cr.y >= r.y + r.h,
-                    };
-                    if found {
-                        self[curr].focus = i as u16;
-                        break 'search c;
-                    }
+                    n.s.remove(p);
+                    prune(n, Nidx::S(pp))
                 }
-                match parent {
-                    Some(p) => curr = p,
-                    None => return,
-                }
-            };
-            let mut target = target;
-            loop {
-                match target {
-                    Nidx::L(l) => {
-                        *f = l;
-                        return;
-                    }
-                    Nidx::S(s) => {
-                        let children = &self[s].children;
-                        let f = self[s].focus.min((children.len() as u16) - 1);
-                        target = children[f as usize];
-                    }
+                _ => {
+                    n.recalc(p);
+                    return p;
                 }
             }
         }
+        prune(self, i.into())
+    }
+    pub fn resize(&mut self, w: u16, h: u16) {
+        self[ROOT].r = Rect { w, h, x: 0, y: 0 };
+        self.recalc(ROOT);
+    }
+    pub fn focus(&mut self, f: &mut Lidx, d: FocusDirection){
+        let r = self[*f].r;
+        let mut curr = self[*f].parent;
+
+        let target = 'search: loop {
+            let (parent, len) = {
+                let s = &self[curr];
+                (s.parent, s.children.len())
+            };
+
+            let forward = matches!(d, FocusDirection::Right | FocusDirection::Down);
+            for j in 0..len {
+                let i = if forward { j } else { len - 1 - j };
+                let c = self[curr].children[i];
+                if matches!(c, Nidx::L(x) if x == *f) {
+                    continue;
+                }
+                let cr = match c {
+                    Nidx::L(x) => self[x].r,
+                    Nidx::S(x) => self[x].r,
+                };
+                let found = match d {
+                    FocusDirection::Left => cr.x + cr.w <= r.x,
+                    FocusDirection::Right => cr.x >= r.x + r.w,
+                    FocusDirection::Up => cr.y + cr.h <= r.y,
+                    FocusDirection::Down => cr.y >= r.y + r.h,
+                };
+                if found {
+                    self[curr].focus = i as u16;
+                    break 'search c;
+                }
+            }
+            match parent {
+                Some(p) => curr = p,
+                None => return,
+            }
+        };
+        let mut target = target;
+        loop {
+            match target {
+                Nidx::L(l) => {
+                    *f = l;
+                    return;
+                }
+                Nidx::S(s) => {
+                    let children = &self[s].children;
+                    let f = self[s].focus.min((children.len() as u16) - 1);
+                    target = children[f as usize];
+                }
+            }
+        }
+    }
 }
