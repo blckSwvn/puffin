@@ -130,7 +130,7 @@ impl Rect {
 }
 
 impl Nodes{
-    fn bottom_pass(&mut self, i:Sidx)->Sidx{
+    fn propegate_fit(&mut self, i:Sidx)->Sidx{
         let (c, d) = {let Split{direction:d, children:c, ..} = &mut self[i]; (std::mem::take(c), *d)};
         let (mut w, mut h) = (0, 0);
         for c in c.iter(){
@@ -175,20 +175,52 @@ impl Nodes{
         }
         self[i].children = c;
         if let Some(p) = self[i].parent{
-            self.bottom_pass(p)
+            self.propegate_fit(p)
         }else{
             i
         }
     }
-    fn top_pass(&mut self, i:Sidx){
+    fn distrobute(&mut self, i:Sidx){
         let (c, d, r) = {
-        let Split{children:c, direction:d, r, ..} = &mut self[i];
-        (std::mem::take(c), *d, *r)
+            let Split{children:c, direction:d, r, ..} = &mut self[i];
+            (std::mem::take(c), *d, *r)
         };
         let mut left = match d{
             Direction::Vertical => r.h,
             Direction::Horizontal => r.w,
         };
+        for c in c.iter(){
+            match d{
+                Direction::Vertical => {
+                    match c.bounds(self).min_h{
+                        Bound::Fit => left -= c.r(self).h,
+                        Bound::Absolute(x) => {left -= x; c.r_mut(self).h = x}
+                        Bound::Relative(x) => {let x = (x * r.h as f32) as u16; left -= x; c.r_mut(self).h = x}
+                    }
+                    // let max = match c.bounds(self).max_w{
+                    //     Bound::Fit => c.r(self).w,
+                    //     Bound::Absolute(x) => x,
+                    //     Bound::Relative(x) => (x * r.w as f32) as u16,
+                    // };
+                    // c.r(self).w = max.min(r.w);
+                    c.r_mut(self).w = r.w;
+                }
+                Direction::Horizontal => {
+                    match c.bounds(self).min_w{
+                        Bound::Fit => left -= c.r(self).w,
+                        Bound::Absolute(x) => {left -= x; c.r_mut(self).w = x}
+                        Bound::Relative(x) => {let x = (x * r.w as f32) as u16; left -= x; c.r_mut(self).w = x}
+                    }
+                    // let max = match c.bounds(self).max_h{
+                    //     Bound::Fit => c.r(self).h,
+                    //     Bound::Relative(x) => (x * r.h as f32) as u16,
+                    //     Bound::Absolute(x) => x,
+                    // };
+                    // c.r(self).h = max.min(r.h);
+                    c.r_mut(self).h = r.h;
+                }
+            }
+        }
         let mut resize: Vec<_> = c.iter().map(|x| Some(*x)).collect();
         while left > 0 && !resize.is_empty(){
             let len = resize.iter().filter(|x| x.is_some()).count() as u16;
@@ -227,7 +259,7 @@ impl Nodes{
         }
                 for c in c.iter(){
                     if let Nidx::S(c) = c{
-                        self.top_pass(*c);
+                        self.distrobute(*c);
                     }
                 }
                 self[i].children = c;
@@ -250,8 +282,8 @@ impl Nodes{
         self[i].children = c;
     }
     pub fn recalc(&mut self, i: Sidx) {
-        let i = self.bottom_pass(i);
-        self.top_pass(i);
+        let i = self.propegate_fit(i);
+        self.distrobute(i);
         self.recalc_pos(i);
     }
     pub fn close<C, E>(&mut self, w:&mut Widgets<C, E>, f:&mut Lidx){

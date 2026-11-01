@@ -240,17 +240,10 @@ pub mod nodes{
         }
     }
     impl Nodes{
-        pub fn new<C, E>(w:u16, h:u16, widgets:&mut Widgets<C, E>, direction:Direction, widget:impl W<C,E> + 'static)->Self{
+        pub fn new<C, E>(w:u16, h:u16, widgets:&mut Widgets<C, E>, direction:Direction, b:Bounds, widget:impl W<C,E> + 'static)->Self{
             let (mut l, mut s) = (Fvec::new(), Fvec::new());
             let wi = widgets.insert(Box::new(widget));
-            let li = l.insert(L{parent:ROOT, r:Rect::ZERO, w:wi, 
-                b:Bounds{
-                    min_w:Bound::Absolute(0),
-                    min_h:Bound::Absolute(0),
-                    max_w:Bound::Relative(1.0),
-                    max_h:Bound::Relative(1.0),
-                }.try_into().unwrap()
-            });
+            let li = l.insert(L{parent:ROOT, r:Rect::ZERO, w:wi, b:b.try_into().unwrap()});
             s.insert(S{parent:None, r:Rect{x:0, y:0, w, h}, direction, children:vec![li.into()], focus:0, 
                 b:Bounds{
                     min_w:Bound::Absolute(w),

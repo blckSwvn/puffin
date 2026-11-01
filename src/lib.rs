@@ -1,14 +1,17 @@
 mod screen;
 mod storage;
 mod layout;
-pub use layout::{Rect, Direction};
+// pub use layout::{Rect, Direction};
 pub use storage::*;
+pub use layout::*;
 use storage::{
     widgets::Widgets,
     nodes::{Nodes, Lidx, Nidx, FOCUS, ROOT}
 };
 
 pub use screen::{ScreenBuffer, Cell};
+
+use crate::layout::Bound::Absolute;
 pub trait Widget<Ctx, Cmd> {
     fn new(ctx: &Ctx) -> Self
     where
@@ -36,7 +39,12 @@ impl<C, E> Ui<C, E>{
         let mut widgets = Widgets::new();
         Self {
             focus:FOCUS,
-            nodes: Nodes::new(w, h, &mut widgets, direction, k),
+            nodes: Nodes::new(w, h, &mut widgets, direction, Bounds{
+                min_w:Bound::Absolute(10),
+                min_h:Bound::Absolute(10),
+                max_h:Bound::Relative(1.0),
+                max_w:Bound::Relative(1.0),
+            }, k),
             widgets,
             old: ScreenBuffer::new(w, h),
             curr: ScreenBuffer::new(w, h),
