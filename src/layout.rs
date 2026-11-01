@@ -197,13 +197,13 @@ impl Nodes{
                         Bound::Absolute(x) => {left -= x; c.r_mut(self).h = x}
                         Bound::Relative(x) => {let x = (x * r.h as f32) as u16; left -= x; c.r_mut(self).h = x}
                     }
-                    // let max = match c.bounds(self).max_w{
-                    //     Bound::Fit => c.r(self).w,
-                    //     Bound::Absolute(x) => x,
-                    //     Bound::Relative(x) => (x * r.w as f32) as u16,
-                    // };
-                    // c.r(self).w = max.min(r.w);
-                    c.r_mut(self).w = r.w;
+                    let max = match c.bounds(self).max_w{
+                        Bound::Fit => c.r(self).w,
+                        Bound::Absolute(x) => x,
+                        Bound::Relative(x) => (x * r.w as f32) as u16,
+                    };
+                    c.r_mut(self).w = max.min(r.w);
+                    // c.r_mut(self).w = r.w;
                 }
                 Direction::Horizontal => {
                     match c.bounds(self).min_w{
@@ -211,13 +211,13 @@ impl Nodes{
                         Bound::Absolute(x) => {left -= x; c.r_mut(self).w = x}
                         Bound::Relative(x) => {let x = (x * r.w as f32) as u16; left -= x; c.r_mut(self).w = x}
                     }
-                    // let max = match c.bounds(self).max_h{
-                    //     Bound::Fit => c.r(self).h,
-                    //     Bound::Relative(x) => (x * r.h as f32) as u16,
-                    //     Bound::Absolute(x) => x,
-                    // };
-                    // c.r(self).h = max.min(r.h);
-                    c.r_mut(self).h = r.h;
+                    let max = match c.bounds(self).max_h{
+                        Bound::Fit => c.r(self).h,
+                        Bound::Relative(x) => (x * r.h as f32) as u16,
+                        Bound::Absolute(x) => x,
+                    };
+                    c.r_mut(self).h = max.min(r.h);
+                    // c.r_mut(self).h = r.h;
                 }
             }
         }
