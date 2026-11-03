@@ -9,21 +9,20 @@ use storage::{
     widgets::Widgets,
     nodes::{Nodes, Lidx, Nidx, FOCUS, ROOT}
 };
-
 pub use screen::{ScreenBuffer, Cell};
 
-pub trait Widget<Ctx, Cmd> {
+pub trait Widget<Ctx, Cmd>{
     fn new(ctx: &mut Ctx) -> Self
     where
         Self: Sized;
-    fn unfocused_sketch(&mut self, r: Rect, curr: &mut ScreenBuffer);
-    fn focused_sketch(&mut self, r: Rect, curr: &mut ScreenBuffer);
+    fn draw(&mut self, r:Rect, screen:&mut ScreenBuffer, focused:bool);
     fn behaviour(
         &mut self,
         k: crossterm::event::KeyEvent,
         ctx: &mut Ctx,
     ) -> Option<Cmd>;
 }
+pub type Background = fn(Rect, &mut ScreenBuffer);
 
 pub struct Ui<C, E>{
     pub focus:Lidx,
@@ -52,8 +51,11 @@ impl<C, E> Ui<C, E>{
         self.draw();
         loop{
             let event = crossterm::event::read().unwrap();
-            if false == handler(event, self, ctx){
-                break;
+            match event{
+                Event::Resize(w, h) => self.nodes.resize(w, h),
+                _ => if false == handler(event, self, ctx){
+                    break;
+                }
             }
             self.draw();
         }
@@ -66,7 +68,7 @@ impl<C, E> Ui<C, E>{
     }
 }
 
-pub fn new<C, E>(direction:Direction, widget:impl Widget<C, E> + 'static)->Ui<C, E>{
+pub fn new<C, E>(direction:Direction, widget:impl Widget<C, E> + 'static, background: Background)->Ui<C, E>{
     let (w, h) = crossterm::terminal::size().unwrap();
     let mut widgets = Widgets::new();
     Ui{
@@ -76,7 +78,7 @@ pub fn new<C, E>(direction:Direction, widget:impl Widget<C, E> + 'static)->Ui<C,
             min_h:Bound::Absolute(10),
             max_h:Bound::Relative(1.0),
             max_w:Bound::Relative(1.0),
-        }, widget),
+        }, widget, background),
         widgets,
         old: ScreenBuffer::new(w, h),
         curr: ScreenBuffer::new(w, h),
@@ -89,30 +91,26 @@ pub fn sketch<Ctx, Cmd>(
     focus: Lidx,
     curr: &mut ScreenBuffer,
 ) {
+    inner(n, widgets, Nidx::S(ROOT), focus, curr);
     fn inner<Ctx, Cmd>(
         n: &Nodes,
         w: &mut Widgets<Ctx, Cmd>,
         idx: Nidx,
         focus: Lidx,
-        curr: &mut ScreenBuffer,
+        screen: &mut ScreenBuffer,
     ) {
         match idx {
-            Nidx::L(l) if l != focus && n[l].r.w != 0 && n[l].r.h != 0 => {
-                let leaf = &n[l];
-                w[leaf.w].unfocused_sketch(leaf.r, curr);
+            Nidx::L(i) => {
+                let l = &n[i];
+                w[l.w].draw(l.r, screen, i == focus);
             }
-            Nidx::L(_) => {}
-            Nidx::S(s) => {
-                for &child in &n[s].children {
-                    inner(n, w, child, focus, curr);
+            Nidx::S(i) => {
+                let s = &n[i];
+                (s.background)(s.r, screen);
+                for &child in &n[i].children {
+                    inner(n, w, child, focus, screen);
                 }
             }
         }
-    }
-
-    inner(n, widgets, Nidx::S(ROOT), focus, curr);
-    let l = &n[focus];
-    if l.r.w != 0 && l.r.h != 0 {
-        widgets[l.w].focused_sketch(l.r, curr);
     }
 }

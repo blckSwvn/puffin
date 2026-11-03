@@ -1,5 +1,5 @@
 pub enum FocusDirection { Left, Right, Up, Down, }
-use crate::{Widget, nodes::Nodes, storage::nodes::{Lidx, Nidx, ROOT, Sidx}, widgets::Widgets
+use crate::{ScreenBuffer, Widget, nodes::Nodes, storage::nodes::{Lidx, Nidx, ROOT, Sidx}, widgets::Widgets
 };
 
 mod leaf{
@@ -19,7 +19,6 @@ mod leaf{
         max_h:Bound,
         min_h:Bound,
     }
-    #[derive(PartialEq)]
     pub struct Leaf{
         pub parent: Sidx,
         pub w: Widx,
@@ -74,15 +73,14 @@ pub enum Direction {
     Vertical,
 }
 
-#[derive(PartialEq)]
 pub struct Split {
-
     pub parent: Option<Sidx>,
     pub focus: u16,
     pub children: Vec<Nidx>, //children cannot be left empty hard invariant
     pub direction: Direction,
     pub r: Rect,
     pub b: Bounds,
+    pub background: fn(Rect, &mut ScreenBuffer),
 }
 
 #[derive(Clone, Copy, PartialEq)]

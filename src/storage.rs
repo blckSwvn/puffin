@@ -1,6 +1,5 @@
 mod fvec{ //freelist vec
     use std::marker::PhantomData;
-    #[derive(PartialEq)]
     pub struct Idx<T>{
         i:u16,
         m:PhantomData<fn()->T>,
@@ -16,6 +15,20 @@ mod fvec{ //freelist vec
             } 
         }
     }
+    impl<T> PartialEq for Idx<T>{
+        fn eq(&self, other: &Self) -> bool {
+            self.i == other.generation
+            && {
+                #[cfg(debug_assertions)]{
+                    self.generation == self.generation
+                }
+                #[cfg(not(debug_assertions))]{
+                    true
+                }
+            }
+        }
+    }
+    impl<T> Eq for Idx<T>{}
     impl<T> Copy for Idx<T>{}
     impl<T> Clone for Idx<T>{ fn clone(&self)-> Self{ *self } }
 
@@ -172,6 +185,7 @@ pub mod nodes{
         Direction,
     };
     use crate::Widget as W;
+    use crate::Background;
 
     pub struct Nodes{
         pub l:Fvec<L>,
@@ -179,7 +193,7 @@ pub mod nodes{
     }
     pub type Sidx = Idx<S>;
     pub type Lidx = Idx<L>;
-    use std::ops::{Index, IndexMut};
+use std::ops::{Index, IndexMut};
     impl Index<Sidx> for Nodes{
         type Output = S;
         fn index(&self, i:Sidx)->&S{
@@ -240,11 +254,11 @@ pub mod nodes{
         }
     }
     impl Nodes{
-        pub fn new<C, E>(w:u16, h:u16, widgets:&mut Widgets<C, E>, direction:Direction, b:Bounds, widget:impl W<C,E> + 'static)->Self{
+        pub fn new<C, E>(w:u16, h:u16, widgets:&mut Widgets<C, E>, direction:Direction, b:Bounds, widget:impl W<C,E> + 'static, background: Background)->Self{
             let (mut l, mut s) = (Fvec::new(), Fvec::new());
             let wi = widgets.insert(Box::new(widget));
             let li = l.insert(L{parent:ROOT, r:Rect::ZERO, w:wi, b:b.try_into().unwrap()});
-            s.insert(S{parent:None, r:Rect{x:0, y:0, w, h}, direction, children:vec![li.into()], focus:0, 
+            s.insert(S{parent:None, r:Rect{x:0, y:0, w, h}, direction, children:vec![li.into()], focus:0, background, 
                 b:Bounds{
                     min_w:Bound::Absolute(w),
                     max_w:Bound::Absolute(w),
@@ -277,6 +291,7 @@ pub mod nodes{
             d:Direction,
             f:Lidx,
             k:Box<dyn W<C, E>>,
+            background:Background,
             split_c:Bounds,
             leaf_c:Bounds
         )->(Lidx, Sidx){
@@ -285,7 +300,7 @@ pub mod nodes{
                 .position(|c| *c == f.into())
                 .unwrap();
             let l = match n[p].children[i] {Nidx::L(l) =>l, _ => unreachable!()};
-            let (new_l, s) = S::add(n, w, d, p, k, split_c, leaf_c);
+            let (new_l, s) = S::add(n, w, d, p, k, background, split_c, leaf_c);
             n[l].parent = s;
             n[p].children.swap_remove(i);
             n[s].children.insert(0, l.into());
@@ -300,10 +315,12 @@ pub mod nodes{
             direction:Direction,
             p:Sidx,
             w:Box<dyn W<C, E>>,
+            background:Background,
             split_c:Bounds,
             leaf_c:Bounds
         )->(Lidx, Sidx){
-            let s = n.s.insert(S{parent:p.into(), focus:0, direction, r:Rect::ZERO, children:vec![], b:split_c});
+            let background = Box::new(background);
+            let s = n.s.insert(S{parent:p.into(), focus:0, direction, r:Rect::ZERO, children:vec![], b:split_c, background:*background});
             n[p].children.push(s.into());
             let w = ws.insert(w);
             let lidx = n.l.insert(L{parent:s, r:Rect::ZERO, w, b:leaf_c.try_into().unwrap()});
