@@ -1,5 +1,5 @@
 pub enum FocusDirection { Left, Right, Up, Down, }
-use crate::{ScreenBuffer, Widget, nodes::Nodes, storage::nodes::{Lidx, Nidx, ROOT, Sidx}, widgets::Widgets
+use crate::{ScreenBuffer, Cell, Widget, nodes::Nodes, storage::nodes::{Lidx, Nidx, ROOT, Sidx}, widgets::Widgets
 };
 
 mod leaf{
@@ -123,6 +123,13 @@ impl Rect {
     pub fn right(self) -> u16 {
         self.x + self.w - 1
     }
+    pub fn fill(self, c:Cell, screen:&mut ScreenBuffer){
+        for x in self.x..=self.right(){
+            for y in self.y..=self.bottom(){
+                screen.set_cell(self, x, y, c);
+            }
+        }
+    }
 }
 
 impl Nodes{
@@ -188,7 +195,7 @@ impl Nodes{
     fn propegate_fit(&mut self, i:Sidx)->Sidx{
         let (c, d) = {let Split{direction:d, children:c, ..} = &mut self[i]; (std::mem::take(c), *d)};
         let (mut w, mut h) = (0, 0);
-        for c in c.iter(){
+        for c in c.iter() {
             match d{
                 Direction::Horizontal => {
                     match c.bounds(self).min_w{

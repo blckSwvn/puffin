@@ -22,6 +22,11 @@ impl Default for Cell {
         }
     }
 }
+impl Cell{
+    pub const fn new(c:char, fg:Color, bg:Color)->Cell{
+        Cell { c, fg, bg }
+    }
+}
 pub struct ScreenBuffer {
     pub cells: Vec<Cell>,
     pub w: u16,
@@ -30,41 +35,19 @@ pub struct ScreenBuffer {
 
 impl ScreenBuffer {
     pub fn new(w:u16, h:u16)->Self{
-        Self { cells: vec![Cell::default(); (w*h) as usize], w, h}
+        Self { cells: vec![Cell::new('�', BG, BG); (w*h) as usize], w, h}
     }
     fn clear_buffer(&mut self) {
         self.cells.fill(Cell::default())
     }
-    pub fn fill_rect(&mut self, r: Rect, c: Color) {
-        if r.w == 0 || r.h == 0 {
-            return;
-        }
-        for x in r.x..=r.right() {
-            for y in r.y..=r.bottom() {
-                self.set_cell_xy(
-                    r,
-                    x,
-                    y,
-                    Cell {
-                        c: ' ',
-                        fg: c,
-                        bg: c,
-                    },
-                );
-            }
-        }
-    }
-    pub fn clear_rect(&mut self, r: Rect) {
-        self.fill_rect(r, BG);
-    }
-    pub fn set_string_xy(&mut self, r: Rect, x: u16, y: u16, s: &str, fg: Color, bg: Color) {
+    pub fn set_string(&mut self, r: Rect, x: u16, y: u16, s: &str, fg: Color, bg: Color) {
         let cur = self;
         for (i, c) in s.chars().enumerate() {
             let xx = x.saturating_add(i as u16);
-            cur.set_cell_xy(r, xx, y, Cell { c, fg, bg });
+            cur.set_cell(r, xx, y, Cell { c, fg, bg });
         }
     }
-    pub fn set_cell_xy(&mut self, r: Rect, x: u16, y: u16, cell: Cell) {
+    pub fn set_cell(&mut self, r: Rect, x: u16, y: u16, cell: Cell) {
         if r.w == 0
             || r.h == 0
             || x < r.x
