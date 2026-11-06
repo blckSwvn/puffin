@@ -17,10 +17,10 @@ mod fvec{ //freelist vec
     }
     impl<T> PartialEq for Idx<T>{
         fn eq(&self, other: &Self) -> bool {
-            self.i == other.generation
+            self.i == other.i
             && {
                 #[cfg(debug_assertions)]{
-                    self.generation == self.generation
+                    self.generation == other.generation
                 }
                 #[cfg(not(debug_assertions))]{
                     true
@@ -193,7 +193,7 @@ pub mod nodes{
     }
     pub type Sidx = Idx<S>;
     pub type Lidx = Idx<L>;
-use std::ops::{Index, IndexMut};
+    use std::ops::{Index, IndexMut};
     impl Index<Sidx> for Nodes{
         type Output = S;
         fn index(&self, i:Sidx)->&S{
@@ -246,18 +246,18 @@ use std::ops::{Index, IndexMut};
                 Self::L(l)=>&mut n[l].r,
             }
         }
-        pub fn bounds(self, n:&Nodes)->Bounds{
+        pub fn bounds<C, E>(self, n:&Nodes, ws:&Widgets<C, E>)->Bounds{
             match self{
                 Self::S(s)=>n[s].b,
-                Self::L(l)=>n[l].b.into(),
+                Self::L(i)=>ws[n[i].w].bounds().into(),
             }
         }
     }
     impl Nodes{
-        pub fn new<C, E>(w:u16, h:u16, widgets:&mut Widgets<C, E>, direction:Direction, b:Bounds, widget:impl W<C,E> + 'static, background: Background)->Self{
+        pub fn new<C, E>(w:u16, h:u16, widgets:&mut Widgets<C, E>, direction:Direction, widget:impl W<C,E> + 'static, background: Background)->Self{
             let (mut l, mut s) = (Fvec::new(), Fvec::new());
             let wi = widgets.insert(Box::new(widget));
-            let li = l.insert(L{parent:ROOT, r:Rect::ZERO, w:wi, b:b.try_into().unwrap()});
+            let li = l.insert(L{parent:ROOT, r:Rect::ZERO, w:wi});
             s.insert(S{parent:None, r:Rect{x:0, y:0, w, h}, direction, children:vec![li.into()], focus:0, background, 
                 b:Bounds{
                     min_w:Bound::Absolute(w),
@@ -267,44 +267,43 @@ use std::ops::{Index, IndexMut};
                 }
             });
             let mut s = Self { l, s };
-            s.recalc(ROOT);
+            s.recalc(widgets, ROOT);
             s
         }
     }
 
     impl L{
-        pub fn add<C, E>(n: &mut Nodes, w:&mut Widgets<C, E>, parent:Sidx, k:Box<dyn W<C, E>>, c:Bounds)->Lidx{
-            let w = w.insert(k);
-            let lidx = n.l.insert(Self{parent, r:Rect::ZERO, w, b:c.try_into().unwrap()});
+        pub fn add<C, E>(n: &mut Nodes, ws:&mut Widgets<C, E>, parent:Sidx, w:Box<dyn W<C, E>>)->Lidx{
+            let w = ws.insert(w);
+            let lidx = n.l.insert(Self{parent, r:Rect::ZERO, w});
             n[parent].children.push(lidx.into());
             lidx
         }
-        pub fn append<C, E>(n:&mut Nodes, w:&mut Widgets<C, E>, f:Lidx, k:Box<dyn W<C, E>>, c:Bounds)->Lidx{
+        pub fn append<C, E>(n:&mut Nodes, ws:&mut Widgets<C, E>, f:Lidx, w:Box<dyn W<C, E>>)->Lidx{
             let p = n[f].parent;
-            let l = L::add(n, w, p, k, c);
-            n.recalc(p);
+            let l = L::add(n, ws, p, w);
+            n.recalc(ws, p);
             l
         }
         pub fn split<C, E>(
             n:&mut Nodes,
-            w:&mut Widgets<C, E>,
+            ws:&mut Widgets<C, E>,
             d:Direction,
             f:Lidx,
-            k:Box<dyn W<C, E>>,
+            w:Box<dyn W<C, E>>,
             background:Background,
-            split_c:Bounds,
-            leaf_c:Bounds
+            split_b:Bounds,
         )->(Lidx, Sidx){
             let p = n[f].parent;
             let i = n[p].children.iter()
                 .position(|c| *c == f.into())
                 .unwrap();
             let l = match n[p].children[i] {Nidx::L(l) =>l, _ => unreachable!()};
-            let (new_l, s) = S::add(n, w, d, p, k, background, split_c, leaf_c);
+            let (new_l, s) = S::add(n, ws, d, p, w, background, split_b);
             n[l].parent = s;
             n[p].children.swap_remove(i);
             n[s].children.insert(0, l.into());
-            n.recalc(p);
+            n.recalc(ws, p);
             (new_l, s)
         }
     }
@@ -316,16 +315,15 @@ use std::ops::{Index, IndexMut};
             p:Sidx,
             w:Box<dyn W<C, E>>,
             background:Background,
-            split_c:Bounds,
-            leaf_c:Bounds
+            b:Bounds,
         )->(Lidx, Sidx){
             let background = Box::new(background);
-            let s = n.s.insert(S{parent:p.into(), focus:0, direction, r:Rect::ZERO, children:vec![], b:split_c, background:*background});
+            let s = n.s.insert(S{parent:p.into(), focus:0, direction, r:Rect::ZERO, children:vec![], b, background:*background});
             n[p].children.push(s.into());
             let w = ws.insert(w);
-            let lidx = n.l.insert(L{parent:s, r:Rect::ZERO, w, b:leaf_c.try_into().unwrap()});
+            let lidx = n.l.insert(L{parent:s, r:Rect::ZERO, w});
             n[s].children.push(lidx.into());
-            n.recalc(p);
+            n.recalc(ws, p);
             (lidx, s)
         }
     }

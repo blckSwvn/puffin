@@ -12,10 +12,9 @@ use storage::{
 pub use screen::{ScreenBuffer, Cell};
 
 pub trait Widget<Ctx, Cmd>{
-    fn new(ctx: &mut Ctx) -> Self
-    where
-        Self: Sized;
+    fn new(ctx: &mut Ctx) -> Self where Self: Sized;
     fn draw(&mut self, r:Rect, screen:&mut ScreenBuffer, focused:bool);
+    fn bounds(&self)->leaf::Bounds;
     fn behaviour(
         &mut self,
         k: crossterm::event::KeyEvent,
@@ -33,13 +32,13 @@ pub struct Ui<C, E>{
 }
 use crossterm::{
     execute, 
-    event::Event,
+    event::{Event, KeyEvent},
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, Clear, ClearType},
     cursor::{MoveTo, Hide}
 };
 use std::io::Write;
 impl<C, E> Ui<C, E>{
-    pub fn run<F>(&mut self, ctx: &mut C, mut handler: F) where F: FnMut(Event, &mut Self, &mut C)->bool{
+    pub fn run<F>(&mut self, ctx: &mut C, mut handler: F) where F: FnMut(KeyEvent, &mut Self, &mut C)->bool{
         crossterm::terminal::enable_raw_mode().unwrap();
         execute!(
             stdout(),
@@ -52,10 +51,11 @@ impl<C, E> Ui<C, E>{
         loop{
             let event = crossterm::event::read().unwrap();
             match event{
-                Event::Resize(w, h) => self.nodes.resize(w, h),
-                _ => if false == handler(event, self, ctx){
+                Event::Resize(w, h) => self.nodes.resize(&self.widgets, w, h),
+                Event::Key(x) => if false == handler(x, self, ctx){
                     break;
                 }
+                _ => {}
             }
             self.draw();
         }
@@ -73,12 +73,7 @@ pub fn new<C, E>(direction:Direction, widget:impl Widget<C, E> + 'static, backgr
     let mut widgets = Widgets::new();
     Ui{
         focus:FOCUS,
-        nodes: Nodes::new(w, h, &mut widgets, direction, Bounds{
-            min_w:Bound::Absolute(10),
-            min_h:Bound::Absolute(10),
-            max_h:Bound::Relative(1.0),
-            max_w:Bound::Relative(1.0),
-        }, widget, background),
+        nodes: Nodes::new(w, h, &mut widgets, direction, widget, background),
         widgets,
         old: ScreenBuffer::new(w, h),
         curr: ScreenBuffer::new(w, h),

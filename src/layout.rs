@@ -2,11 +2,11 @@ pub enum FocusDirection { Left, Right, Up, Down, }
 use crate::{ScreenBuffer, Cell, Widget, nodes::Nodes, storage::nodes::{Lidx, Nidx, ROOT, Sidx}, widgets::Widgets
 };
 
-mod leaf{
+pub mod leaf{
     use super::Rect;
     use crate::storage::{nodes::Sidx, widgets::Widx};
     #[derive(Clone, Copy, PartialEq)]
-    //subset of split constraints since leaves cant have children therefore shouldnt be able to have
+    //subset of split bounds since leaves cant have children therefore shouldnt be able to have
     //fit sizing
     pub enum Bound{
         Absolute(u16),
@@ -23,7 +23,6 @@ mod leaf{
         pub parent: Sidx,
         pub w: Widx,
         pub r: Rect,
-        pub b: Bounds,
     }
     impl TryFrom<super::Bounds> for Bounds{
         type Error = &'static str;
@@ -87,7 +86,23 @@ pub struct Split {
 pub enum Bound{
     Absolute(u16),
     Relative(f32),//relative to parent
-    Fit,
+    Fit, //same direction: sum of children minimums, diff direction: max children minimum 
+}
+impl Bound{
+    fn get(self, width:bool, curr:Rect, parent_r:Rect, parent_b:Bounds)->u16{
+        match self{
+            Self::Absolute(x) => x,
+            Self::Fit => if width{curr.w}else{curr.h}
+            Self::Relative(x) => {
+                let b = parent_b;
+                if [b.min_w, b.max_w, b.min_h, b.max_h].iter().any(|x| *x == Bound::Fit){
+                    if width{curr.w}else{curr.h}
+                }else{
+                    if width{(parent_r.w as f32 * x) as u16 }else{(parent_r.h as f32 * x) as u16}
+                }
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -96,6 +111,20 @@ pub struct Bounds{
     pub min_w: Bound,
     pub max_h: Bound,
     pub min_h: Bound,
+}
+impl Bounds{
+    fn max_w(self, curr:Rect,  parent_r:Rect, parent_b:Bounds)->u16{
+        self.max_w.get(true, curr, parent_r, parent_b)
+    }
+    fn min_w(self, curr:Rect, parent_r:Rect, parent_b:Bounds)->u16{
+        self.min_w.get(true, curr, parent_r, parent_b)
+    }
+    fn max_h(self, curr:Rect, parent_r:Rect, parent_b:Bounds)->u16{
+        self.max_h.get(false, curr, parent_r, parent_b)
+    }
+    fn min_h(self, curr:Rect, parent_r:Rect, parent_b:Bounds)->u16{
+        self.min_h.get(false, curr, parent_r, parent_b)
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rect {
@@ -133,9 +162,9 @@ impl Rect {
 }
 
 impl Nodes{
-    pub fn resize(&mut self, w: u16, h: u16) {
+    pub fn resize<C, E>(&mut self, ws:&Widgets<C, E>, w: u16, h: u16) {
         self[ROOT].r = Rect { w, h, x: 0, y: 0 };
-        self.recalc(ROOT);
+        self.recalc(ws, ROOT);
     }
     pub fn focus(&mut self, f: &mut Lidx, d: FocusDirection){
         let r = self[*f].r;
@@ -192,37 +221,67 @@ impl Nodes{
     pub fn change_widget<C, E>(&mut self, f:Lidx, widgets: &mut Widgets<C, E>, w:Box<dyn Widget<C, E>>){
         widgets.replace(self[f].w, w);
     }
-    fn propegate_fit(&mut self, i:Sidx)->Sidx{
+    fn propegate_fit<C, E>(&mut self, ws:&Widgets<C, E>, i:Sidx)->Sidx{
         let (c, d) = {let Split{direction:d, children:c, ..} = &mut self[i]; (std::mem::take(c), *d)};
         let (mut w, mut h) = (0, 0);
         for c in c.iter() {
+            let b = c.bounds(self, ws);
+            let c = c.r(self);
             match d{
                 Direction::Horizontal => {
-                    match c.bounds(self).min_w{
+                    match b.min_w{
                         Bound::Absolute(a) => w += a,
-                        Bound::Fit         => w += c.r(self).w,
+                        Bound::Fit         => w += c.w,
                         Bound::Relative(_) => {}
                     }
-                    match c.bounds(self).min_h{
+                    match b.min_h{
                         Bound::Absolute(a) => h = h.max(a),
-                        Bound::Fit         => h = h.max(c.r(self).h),
+                        Bound::Fit         => h = h.max(c.h),
                         Bound::Relative(_) => {}
                     }
                 }
                 Direction::Vertical => {
-                    match c.bounds(self).min_h{
+                    match b.min_h{
                         Bound::Absolute(a) => h += a,
-                        Bound::Fit         => h += c.r(self).h,
+                        Bound::Fit         => h += c.h,
                         Bound::Relative(_) => {} 
                     }
-                    match c.bounds(self).min_w{
+                    match b.min_w{
                         Bound::Absolute(a) => w = w.max(a),
-                        Bound::Fit         => w = w.max(c.r(self).w),
+                        Bound::Fit         => w = w.max(c.w),
                         Bound::Relative(_) => {},
                     }
                 }
             }
         }
+        let (prev_w, prev_h) = (w, h);
+        for c in c.iter(){
+            let b = c.bounds(self, ws);
+            let r = c.r_mut(self);
+            match d{
+                Direction::Horizontal => {
+                    if let Bound::Relative(x) = b.min_w{
+                        r.w = ((prev_w as f32) * x) as u16;
+                        w += r.w;
+                    }
+                    if let Bound::Relative(x) = b.min_h{
+                        r.h = ((prev_h as f32) * x) as u16;
+                        h = r.h.max(h);
+                    }
+                }
+                Direction::Vertical => {
+                    if let Bound::Relative(x) = b.min_h{
+                        r.h = ((prev_h as f32) * x) as u16;
+                        h += r.h;
+                    }
+                    if let Bound::Relative(x) = b.min_w{
+                        r.h = ((prev_w as f32) * x) as u16;
+                        w = r.h.max(w);
+                    }
+                }
+            }
+        }
+
         if let Bound::Fit = self[i].b.min_w{
             self[i].r.w = w;
         }
@@ -237,53 +296,37 @@ impl Nodes{
         }
         self[i].children = c;
         if let Some(p) = self[i].parent{
-            self.propegate_fit(p)
+            self.propegate_fit(ws, p)
         }else{
             i
         }
     }
-    fn distrobute(&mut self, i:Sidx){
-        let (c, d, r) = {
-            let Split{children:c, direction:d, r, ..} = &mut self[i];
-            (std::mem::take(c), *d, *r)
+    fn distrobute<C, E>(&mut self, ws:&Widgets<C, E>, i:Sidx){
+        let (children, d, parent_r, parent_b) = {
+            let Split{children:c, direction:d, r, b, ..} = &mut self[i];
+            (std::mem::take(c), *d, *r, *b)
         };
         let mut left = match d{
-            Direction::Vertical => r.h,
-            Direction::Horizontal => r.w,
+            Direction::Vertical => parent_r.h,
+            Direction::Horizontal => parent_r.w,
         };
-        for c in c.iter(){
+        for c in children.iter(){
+            let b = c.bounds(self, ws);
+            let r = c.r_mut(self);
             match d{
                 Direction::Vertical => {
-                    match c.bounds(self).min_h{
-                        Bound::Fit => left -= c.r(self).h,
-                        Bound::Absolute(x) => {left -= x; c.r_mut(self).h = x}
-                        Bound::Relative(x) => {let x = (x * r.h as f32) as u16; left -= x; c.r_mut(self).h = x}
-                    }
-                    let max = match c.bounds(self).max_w{
-                        Bound::Fit => c.r(self).w,
-                        Bound::Absolute(x) => x,
-                        Bound::Relative(x) => (x * r.w as f32) as u16,
-                    };
-                    c.r_mut(self).w = max.min(r.w);
-                    // c.r_mut(self).w = r.w;
+                    left -= {let x = b.min_h(*r, parent_r, parent_b); r.h = x; x};
+                    let max = b.max_w(*r, parent_r, parent_b);
+                    r.w = max.min(parent_r.w);
                 }
                 Direction::Horizontal => {
-                    match c.bounds(self).min_w{
-                        Bound::Fit => left -= c.r(self).w,
-                        Bound::Absolute(x) => {left -= x; c.r_mut(self).w = x}
-                        Bound::Relative(x) => {let x = (x * r.w as f32) as u16; left -= x; c.r_mut(self).w = x}
-                    }
-                    let max = match c.bounds(self).max_h{
-                        Bound::Fit => c.r(self).h,
-                        Bound::Relative(x) => (x * r.h as f32) as u16,
-                        Bound::Absolute(x) => x,
-                    };
-                    c.r_mut(self).h = max.min(r.h);
-                    // c.r_mut(self).h = r.h;
+                    left -= {let x = b.min_w(*r, parent_r, parent_b); r.w = x; x};
+                    let max = b.max_h(*r, parent_r, parent_b);
+                    c.r_mut(self).h = max.min(parent_r.h);
                 }
             }
         }
-        let mut resize: Vec<_> = c.iter().map(|x| Some(*x)).collect();
+        let mut resize: Vec<_> = children.iter().map(|x| Some(*x)).collect();
         while left > 0 && !resize.is_empty(){
             let len = resize.iter().filter(|x| x.is_some()).count() as u16;
             if len == 0{break};
@@ -292,24 +335,18 @@ impl Nodes{
             let mut used = 0;
             for child in resize.iter_mut(){
                 let Some(c) = child else {continue};
+                let b = c.bounds(self, ws);
+                let c = c.r_mut(self);
                 let (size, max) = match d{
-                    Direction::Horizontal => (c.r(self).w, match c.bounds(self).max_w{
-                        Bound::Absolute(x) => x,
-                        Bound::Fit => c.r(self).w,
-                        Bound::Relative(x) => (x * r.w as f32) as u16,
-                    }),
-                    Direction::Vertical   => (c.r(self).h, match c.bounds(self).max_h{
-                        Bound::Absolute(x) => x,
-                        Bound::Fit => c.r(self).h,
-                        Bound::Relative(x) => (x * r.h as f32) as u16,
-                    }),
+                    Direction::Horizontal => (c.w, b.max_w(*c, parent_r, parent_b)),
+                    Direction::Vertical   => (c.h, b.max_h(*c, parent_r, parent_b)),
                 };
                 let add = 
                     (per + if rem > 0{rem -= 1; 1}else{0})
                     .min(max.saturating_sub(size));
                 match d{
-                    Direction::Vertical   => c.r_mut(self).h += add,
-                    Direction::Horizontal => c.r_mut(self).w += add,
+                    Direction::Vertical   => c.h += add,
+                    Direction::Horizontal => c.w += add,
                 }
                 used += add;
                 if size + add >= max{
@@ -319,12 +356,12 @@ impl Nodes{
             left -= used;
             if used == 0 {break}
         }
-                for c in c.iter(){
+                for c in children.iter(){
                     if let Nidx::S(c) = c{
-                        self.distrobute(*c);
+                        self.distrobute(ws, *c);
                     }
                 }
-                self[i].children = c;
+                self[i].children = children;
     }
     fn recalc_pos(&mut self, i:Sidx){
         let (c, d, mut r) = {let Split{children:c, direction:d, r, ..} = &mut self[i]; (std::mem::take(c), *d, *r)};
@@ -343,13 +380,13 @@ impl Nodes{
         }
         self[i].children = c;
     }
-pub fn recalc(&mut self, i: Sidx) {
-        let i = self.propegate_fit(i);
-        self.distrobute(i);
+pub fn recalc<C, E>(&mut self, ws:&Widgets<C, E>, i: Sidx) {
+        let i = self.propegate_fit(ws, i);
+        self.distrobute(ws, i);
         self.recalc_pos(i);
     }
-    fn prune(&mut self, i: Lidx) -> Sidx{
-        fn prune(n: &mut Nodes, i: Nidx) -> Sidx{
+    fn prune<C, E>(&mut self, ws:&Widgets<C, E>, i: Lidx) -> Sidx{
+        fn prune<C, E>(n: &mut Nodes, ws:&Widgets<C, E>, i: Nidx) -> Sidx{
             let p = match i {
                 Nidx::L(i) => n[i].parent,
                 Nidx::S(i) => match n[i].parent {
@@ -370,7 +407,7 @@ pub fn recalc(&mut self, i: Sidx) {
                         Nidx::L(i) => n[i].parent = pp,
                     }
                     n.s.remove(p);
-                    prune(n, Nidx::S(pp))
+                    prune(n, ws, Nidx::S(pp))
                 }
                 0 => {
                     n[pp].children.retain(|c| *c != Nidx::S(p));
@@ -378,14 +415,14 @@ pub fn recalc(&mut self, i: Sidx) {
                         u16::min(n[pp].focus, (n[pp].children.len() - 1) as u16)
                     };
                     n.s.remove(p);
-                    prune(n, Nidx::S(pp))
+                    prune(n, ws, Nidx::S(pp))
                 }
                 _ => {
-                    n.recalc(p);
+                    n.recalc(ws, p);
                     return p;
                 }
             }
         }
-        prune(self, i.into())
+        prune(self, ws, i.into())
     }
 }
