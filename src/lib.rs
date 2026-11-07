@@ -1,7 +1,7 @@
 mod screen;
 mod storage;
 mod layout;
-use std::io::stdout;
+use std::io::{self, stdout};
 
 pub use storage::*;
 pub use layout::*;
@@ -31,40 +31,58 @@ pub struct Ui<C, E>{
     curr:ScreenBuffer,
 }
 use crossterm::{
-    execute, 
-    event::{Event, KeyEvent},
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, Clear, ClearType},
-    cursor::{MoveTo, Hide}
+    cursor::{Hide, MoveTo, Show}, event::Event, execute, terminal::{Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode}
 };
 use std::io::Write;
-impl<C, E> Ui<C, E>{
-    pub fn run<F>(&mut self, ctx: &mut C, mut handler: F) where F: FnMut(KeyEvent, &mut Self, &mut C)->bool{
-        crossterm::terminal::enable_raw_mode().unwrap();
-        execute!(
-            stdout(),
-            EnterAlternateScreen,
-            Clear(ClearType::All),
-            MoveTo(0,0),
-            Hide
-        ).unwrap();
-        self.draw();
+impl<Ctx, Cmd> Ui<Ctx, Cmd>{
+    pub fn run<F>(&mut self, ctx: &mut Ctx, mut handler: F)->io::Result<()> where F:
+        FnMut(Cmd, &mut Self, &mut Ctx)->bool{
+        fn guard()->io::Result<impl Drop>{
+            crossterm::terminal::enable_raw_mode()?;
+            if let Err(x) = execute!(
+                stdout(),
+                EnterAlternateScreen,
+                Clear(ClearType::All),
+                MoveTo(0,0),
+                Hide
+            ){
+                let _ = disable_raw_mode();
+                return Err(x)
+            }
+            struct T;
+            impl Drop for T{
+                fn drop(&mut self) {
+                    let mut out = stdout();
+                    let _ = execute!(out, LeaveAlternateScreen, Show);
+                    let _ = disable_raw_mode();
+                }
+            }
+            Ok(T)
+        }
+        let _guard = guard()?;
+        self.draw()?;
         loop{
-            let event = crossterm::event::read().unwrap();
+            let event = crossterm::event::read()?;
             match event{
-                Event::Resize(w, h) => self.nodes.resize(&self.widgets, w, h),
-                Event::Key(x) => if false == handler(x, self, ctx){
-                    break;
+                Event::Resize(w, h) => {
+                    self.old = ScreenBuffer::new(w, h);
+                    self.curr = ScreenBuffer::new(w, h);
+                    self.nodes.resize(&self.widgets, w, h);
+                    }
+                Event::Key(x) => if let Some(cmd) = self.widgets[self.nodes[self.focus].w].behaviour(x, ctx){
+                    if false == handler(cmd, self, ctx){break}
                 }
                 _ => {}
             }
-            self.draw();
+            self.draw()?;
         }
-        execute!(stdout(), LeaveAlternateScreen).unwrap()
+        Ok(())
     }
-    fn draw(&mut self){
+    fn draw(&mut self)->std::io::Result<()>{
         sketch(&self.nodes, &mut self.widgets, self.focus, &mut self.curr);
-        self.curr.draw(&mut self.old).unwrap();
-        stdout().flush().unwrap();
+        self.curr.draw(&mut self.old)?;
+        stdout().flush()?;
+        Ok(())
     }
 }
 

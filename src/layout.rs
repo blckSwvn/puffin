@@ -144,13 +144,13 @@ impl Rect {
         self.y
     }
     pub fn bottom(self) -> u16 {
-        self.y + self.h - 1
+        (self.y + self.h).saturating_sub(1)
     }
     pub fn left(self) -> u16 {
         self.x
     }
     pub fn right(self) -> u16 {
-        self.x + self.w - 1
+        (self.x + self.w).saturating_sub(1)
     }
     pub fn fill(self, c:Cell, screen:&mut ScreenBuffer){
         for x in self.x..=self.right(){
@@ -275,8 +275,8 @@ impl Nodes{
                         h += r.h;
                     }
                     if let Bound::Relative(x) = b.min_w{
-                        r.h = ((prev_w as f32) * x) as u16;
-                        w = r.h.max(w);
+                        r.w = ((prev_w as f32) * x) as u16;
+                        w = r.w.max(w);
                     }
                 }
             }
@@ -353,7 +353,7 @@ impl Nodes{
                     *child = None;
                 }
             }
-            left -= used;
+            left = left.saturating_sub(used);
             if used == 0 {break}
         }
                 for c in children.iter(){
