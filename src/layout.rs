@@ -24,6 +24,16 @@ pub mod leaf{
         pub w: Widx,
         pub r: Rect,
     }
+    impl Default for Bounds{
+        fn default() -> Self {
+            Self{
+                min_w:Bound::Absolute(0),
+                min_h:Bound::Absolute(0),
+                max_w:Bound::Relative(1.0),
+                max_h:Bound::Relative(1.0),
+            }
+        }
+    }
     impl TryFrom<super::Bounds> for Bounds{
         type Error = &'static str;
         fn try_from(c:super::Bounds)->Result<Self, Self::Error>{
@@ -111,6 +121,16 @@ pub struct Bounds{
     pub min_w: Bound,
     pub max_h: Bound,
     pub min_h: Bound,
+}
+impl Default for Bounds{
+    fn default() -> Self {
+        Self{
+            min_w:Bound::Absolute(0),
+            min_h:Bound::Absolute(0),
+            max_w:Bound::Relative(1.0),
+            max_h:Bound::Relative(1.0),
+        }
+    }
 }
 impl Bounds{
     fn max_w(self, curr:Rect,  parent_r:Rect, parent_b:Bounds)->u16{

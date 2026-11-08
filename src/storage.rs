@@ -82,11 +82,11 @@ mod fvec{ //freelist vec
         }
         pub fn remove(&mut self, i:Idx<T>)->T{
             let slot = &mut self.used[i.i as usize];
-            let val = slot.val.take().unwrap();
             #[cfg(debug_assertions)]{
                 assert_eq!(slot.generation, i.generation, "Stale fvec index");
                 slot.generation = slot.generation.wrapping_add(1);
             }
+            let val = slot.val.take().unwrap();
             self.free.push(i.i);
             val
         }
@@ -277,13 +277,8 @@ pub mod nodes{
             let w = ws.insert(w);
             let lidx = n.l.insert(Self{parent, r:Rect::ZERO, w});
             n[parent].children.push(lidx.into());
+            n.recalc(ws, n[lidx].parent);
             lidx
-        }
-        pub fn append<C, E>(n:&mut Nodes, ws:&mut Widgets<C, E>, f:Lidx, w:Box<dyn W<C, E>>)->Lidx{
-            let p = n[f].parent;
-            let l = L::add(n, ws, p, w);
-            n.recalc(ws, p);
-            l
         }
         pub fn split<C, E>(
             n:&mut Nodes,
