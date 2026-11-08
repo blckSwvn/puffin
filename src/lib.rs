@@ -1,7 +1,9 @@
 mod screen;
 mod storage;
 mod layout;
+mod builder;
 use std::io::{self, stdout};
+pub use builder::*;
 
 pub use layout::{Rect, Direction, leaf::Bounds as LeafBounds, leaf::Bound as LeafBound};
 use layout::*;
@@ -93,65 +95,20 @@ impl<Ctx, Cmd> Ui<Ctx, Cmd>{
     }
 }
 
-pub struct Builder<'a, C, E>{
-    nodes: &'a mut Nodes,
-    widgets: &'a mut Widgets<C, E>,
-    parent:Sidx,
-}
 fn background(rect:Rect, screen:&mut ScreenBuffer){
     rect.fill(Cell::default(), screen);
 }
-impl<C, E> Builder<'_, C, E>{
-        pub fn background(&mut self, background: Background)->&mut Self{
-            self.nodes[self.parent].background = background;
-            self
-        }
-        pub fn bounds(&mut self, bounds:Bounds)->&mut Self{
-            self.nodes[self.parent].b = bounds.into();
-            self
-        }
-    pub fn add(&mut self, widget: impl Widget<C, E> + 'static)->&mut Self{
-        Leaf::add(self.nodes, self.widgets, self.parent, Box::new(widget));
-        self
-    }
-    pub fn vertical(&mut self, widget:impl Widget<C, E> + 'static, build: impl FnOnce(&mut Builder<'_, C, E>))->&mut Self{
-        let (_, parent) = Split::add(
-            self.nodes,
-            self.widgets,
-            Direction::Vertical,
-            self.parent,
-            Box::new(widget),
-            background,
-            Bounds::default(),
-        );
-        build(&mut Builder {parent, nodes:self.nodes, widgets:self.widgets});
-        self
-    }
-    pub fn horizontal(&mut self, widget:impl Widget<C, E> + 'static, build: impl FnOnce(&mut Builder<'_, C, E>))->&mut Self{
-        let (_, parent) = Split::add(
-            self.nodes,
-            self.widgets,
-            Direction::Horizontal,
-            self.parent,
-            Box::new(widget),
-            background,
-            leaf::Bounds::default().into(),
-        );
-        build(&mut Builder {parent, nodes:self.nodes, widgets:self.widgets});
-        self
-    }
-}
-pub fn new<C, E>(direction:Direction, widget:impl Widget<C, E> + 'static, build:impl FnOnce(&mut Builder<'_, C, E>))->Ui<C, E>{
+pub fn new<C, E>(direction:Direction, build:impl FnOnce(Empty<'_, C, E>)->NonEmpty<'_, C, E>)->Ui<C, E>{
     let (w, h) = crossterm::terminal::size().unwrap();
     let mut widgets = Widgets::new();
     let mut puffin = Ui{
         focus:FOCUS,
-        nodes: Nodes::new(w, h, &mut widgets, direction, widget, background),
+        nodes: Nodes::new(w, h, &mut widgets, direction, background),
         widgets,
         old: ScreenBuffer::new(w, h),
         curr: ScreenBuffer::new(w, h),
     };
-    build(&mut Builder { nodes: &mut puffin.nodes, widgets: &mut puffin.widgets, parent: ROOT });
+    build(Empty::new(&mut puffin.nodes, &mut puffin.widgets));
     puffin
 } 
 

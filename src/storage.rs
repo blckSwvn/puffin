@@ -254,11 +254,9 @@ pub mod nodes{
         }
     }
     impl Nodes{
-        pub fn new<C, E>(w:u16, h:u16, widgets:&mut Widgets<C, E>, direction:Direction, widget:impl W<C,E> + 'static, background: Background)->Self{
-            let (mut l, mut s) = (Fvec::new(), Fvec::new());
-            let wi = widgets.insert(Box::new(widget));
-            let li = l.insert(L{parent:ROOT, r:Rect::ZERO, w:wi});
-            s.insert(S{parent:None, r:Rect{x:0, y:0, w, h}, direction, children:vec![li.into()], focus:0, background, 
+        pub fn new<C, E>(w:u16, h:u16, widgets:&mut Widgets<C, E>, direction:Direction, background: Background)->Self{
+            let (l, mut s) = (Fvec::new(), Fvec::new());
+            s.insert(S{parent:None, r:Rect{x:0, y:0, w, h}, direction, children:vec![], focus:0, background, 
                 b:Bounds{
                     min_w:Bound::Absolute(w),
                     max_w:Bound::Absolute(w),
@@ -303,8 +301,29 @@ pub mod nodes{
         }
     }
     impl S{
+        pub(crate) fn add_empty<C, E>(
+            ns:&mut Nodes,
+            ws:&Widgets<C, E>,
+            direction:Direction,
+            p:Sidx,
+            background:Background,
+            b:Bounds
+        )->Sidx{
+            let i =
+                ns.s.insert(S{
+                        parent:p.into(),
+                        focus:0,
+                        direction,
+                        r:Rect::ZERO,
+                        children:vec![],
+                        b,
+                        background,
+                    });
+            ns.recalc(ws, i);
+            i
+        }
         pub fn add<C, E>(
-            n:&mut Nodes,
+            ns:&mut Nodes,
             ws:&mut Widgets<C, E>,
             direction:Direction,
             p:Sidx,
@@ -312,13 +331,13 @@ pub mod nodes{
             background:Background,
             b:Bounds,
         )->(Lidx, Sidx){
-            let background = Box::new(background);
-            let s = n.s.insert(S{parent:p.into(), focus:0, direction, r:Rect::ZERO, children:vec![], b, background:*background});
-            n[p].children.push(s.into());
+            // let background = Box::new(background);
+            let s = ns.s.insert(S{parent:p.into(), focus:0, direction, r:Rect::ZERO, children:vec![], b, background});
+            ns[p].children.push(s.into());
             let w = ws.insert(w);
-            let lidx = n.l.insert(L{parent:s, r:Rect::ZERO, w});
-            n[s].children.push(lidx.into());
-            n.recalc(ws, p);
+            let lidx = ns.l.insert(L{parent:s, r:Rect::ZERO, w});
+            ns[s].children.push(lidx.into());
+            ns.recalc(ws, p);
             (lidx, s)
         }
     }
