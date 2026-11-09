@@ -1,5 +1,5 @@
 pub enum FocusDirection { Left, Right, Up, Down, }
-use crate::{ScreenBuffer, Cell, Widget, nodes::Nodes, storage::nodes::{Lidx, Nidx, ROOT, Sidx}, widgets::Widgets
+use crate::{Background, Cell, ScreenBuffer, Widget, nodes::Nodes, storage::nodes::{Lidx, Nidx, ROOT, Sidx}, widgets::Widgets
 };
 
 pub mod leaf{
@@ -185,61 +185,6 @@ impl Nodes{
     pub fn resize<C, E>(&mut self, ws:&Widgets<C, E>, w: u16, h: u16) {
         self[ROOT].r = Rect { w, h, x: 0, y: 0 };
         self.recalc(ws, ROOT);
-    }
-    pub fn focus(&mut self, f: &mut Lidx, d: FocusDirection){
-        let r = self[*f].r;
-        let mut curr = self[*f].parent;
-
-        let target = 'search: loop {
-            let (parent, len) = {
-                let s = &self[curr];
-                (s.parent, s.children.len())
-            };
-
-            let forward = matches!(d, FocusDirection::Right | FocusDirection::Down);
-            for j in 0..len {
-                let i = if forward { j } else { len - 1 - j };
-                let c = self[curr].children[i];
-                if matches!(c, Nidx::L(x) if x == *f) {
-                    continue;
-                }
-                let cr = match c {
-                    Nidx::L(x) => self[x].r,
-                    Nidx::S(x) => self[x].r,
-                };
-                let found = match d {
-                    FocusDirection::Left => cr.x + cr.w <= r.x,
-                    FocusDirection::Right => cr.x >= r.x + r.w,
-                    FocusDirection::Up => cr.y + cr.h <= r.y,
-                    FocusDirection::Down => cr.y >= r.y + r.h,
-                };
-                if found {
-                    self[curr].focus = i as u16;
-                    break 'search c;
-                }
-            }
-            match parent {
-                Some(p) => curr = p,
-                None => return,
-            }
-        };
-        let mut target = target;
-        loop {
-            match target {
-                Nidx::L(l) => {
-                    *f = l;
-                    return;
-                }
-                Nidx::S(s) => {
-                    let children = &self[s].children;
-                    let f = self[s].focus.min((children.len() as u16) - 1);
-                    target = children[f as usize];
-                }
-            }
-        }
-    }
-    pub fn change_widget<C, E>(&mut self, f:Lidx, widgets: &mut Widgets<C, E>, w:Box<dyn Widget<C, E>>){
-        widgets.replace(self[f].w, w);
     }
     pub fn propegate_fit<C, E>(&mut self, ws:&Widgets<C, E>, i:Sidx)->Sidx{
         let (c, d) = {let Split{direction:d, children:c, ..} = &mut self[i]; (std::mem::take(c), *d)};
@@ -444,5 +389,88 @@ pub fn recalc<C, E>(&mut self, ws:&Widgets<C, E>, i: Sidx) {
             }
         }
         prune(self, ws, i.into())
+    }
+}
+
+impl Nodes{
+    pub fn focus(&mut self, f: &mut Lidx, d: FocusDirection){
+        let r = self[*f].r;
+        let mut curr = self[*f].parent;
+
+        let target = 'search: loop {
+            let (parent, len) = {
+                let s = &self[curr];
+                (s.parent, s.children.len())
+            };
+
+            let forward = matches!(d, FocusDirection::Right | FocusDirection::Down);
+            for j in 0..len {
+                let i = if forward { j } else { len - 1 - j };
+                let c = self[curr].children[i];
+                if matches!(c, Nidx::L(x) if x == *f) {
+                    continue;
+                }
+                let cr = match c {
+                    Nidx::L(x) => self[x].r,
+                    Nidx::S(x) => self[x].r,
+                };
+                let found = match d {
+                    FocusDirection::Left => cr.x + cr.w <= r.x,
+                    FocusDirection::Right => cr.x >= r.x + r.w,
+                    FocusDirection::Up => cr.y + cr.h <= r.y,
+                    FocusDirection::Down => cr.y >= r.y + r.h,
+                };
+                if found {
+                    self[curr].focus = i as u16;
+                    break 'search c;
+                }
+            }
+            match parent {
+                Some(p) => curr = p,
+                None => return,
+            }
+        };
+        let mut target = target;
+        loop {
+            match target {
+                Nidx::L(l) => {
+                    *f = l;
+                    return;
+                }
+                Nidx::S(s) => {
+                    let children = &self[s].children;
+                    let f = self[s].focus.min((children.len() as u16) - 1);
+                    target = children[f as usize];
+                }
+            }
+        }
+    }
+    pub fn change_widget<C, E>(&mut self, f:Lidx, widgets: &mut Widgets<C, E>, w:impl Widget<C, E> + 'static){
+        widgets.replace(self[f].w, Box::new(w));
+    }
+    pub fn split<C, E>(
+        &mut self,
+        ws:&mut Widgets<C, E>,
+        d:Direction,
+        f:Lidx,
+        w:Box<dyn Widget<C, E>>,
+        background:Background,
+        split_b:Bounds
+    ){
+        Leaf::split(self, ws, d, f, w, background, split_b);
+    }
+    pub fn close<C, E>(&mut self, ws:&mut Widgets<C, E>, f:&mut Lidx){
+        let p = self[*f].parent;
+        let w = self[*f].w;
+        self[p].children.retain(|x| *x != (*f).into());
+        let last = self.prune(ws, *f);
+        ws.remove(w);
+        self.l.remove(*f);
+        let mut i = (*f).into();
+        while let Nidx::S(_) = i{
+            i = self[last].children[self[last].focus as usize]
+        }
+        let Nidx::L(x) = i else{unreachable!()};
+        *f = x;
     }
 }

@@ -5,12 +5,24 @@ mod builder;
 use std::io::{self, stdout};
 pub use builder::*;
 
-pub use layout::{Rect, Direction, leaf};
+pub use layout::{Rect, Direction, leaf, Bounds, FocusDirection};
 use layout::*;
 use storage::*;
 use storage::{
     widgets::Widgets,
     nodes::{Nodes, Sidx, Lidx, Nidx, FOCUS, ROOT}
+};
+use crossterm::{
+    cursor::{Hide, MoveTo, Show},
+    event::{Event, KeyEvent},
+    execute,
+    terminal::{
+        Clear,
+        ClearType,
+        EnterAlternateScreen,
+        LeaveAlternateScreen,
+        disable_raw_mode
+    }
 };
 pub use screen::{ScreenBuffer, Cell};
 
@@ -20,32 +32,46 @@ pub trait Widget<Ctx, Cmd>{
     fn bounds(&self)->leaf::Bounds;
     fn behaviour(
         &mut self,
-        k: crossterm::event::KeyEvent,
+        k: KeyEvent,
         ctx: &mut Ctx,
     ) -> Response<Cmd>;
 }
 pub type Background = fn(Rect, &mut ScreenBuffer);
 pub struct Ui<C, E>{
     pub focus:Lidx,
-    pub widgets:Widgets<C, E>,
-    pub nodes:Nodes,
+    widgets:Widgets<C, E>,
+    nodes:Nodes,
     old:ScreenBuffer,
     curr:ScreenBuffer,
+    quit:bool,
 }
-use crossterm::{
-    cursor::{Hide, MoveTo, Show}, event::Event, execute, terminal::{Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode}
-};
 pub enum Response<Cmd>{
     Ignored,
     Consumed,
     Cmd(Cmd),
-    Quit,
 }
 use std::io::Write;
 
 impl<Ctx, Cmd> Ui<Ctx, Cmd>{
+    pub fn focus(&mut self, d:FocusDirection){
+        self.nodes.focus(&mut self.focus, d);
+    }
+    pub fn close(&mut self){
+        self.nodes.close(&mut self.widgets, &mut self.focus);
+    }
+    pub fn change_widget(&mut self, w:impl Widget<Ctx, Cmd> + 'static){
+        self.nodes.change_widget(self.focus, &mut self.widgets, w);
+    }
+    pub fn split(&mut self, d:Direction, w:Box<dyn Widget<Ctx, Cmd>>, split_b: Bounds){
+        self.nodes.split(&mut self.widgets, d, self.focus, w, background, split_b);
+    }
+    pub fn quit(&mut self){
+        self.quit = false;
+    }
+}
+impl<Ctx, Cmd> Ui<Ctx, Cmd>{
     pub fn run<F>(&mut self, ctx: &mut Ctx, mut handler: F)->io::Result<()> where F:
-        FnMut(Response<Cmd>, &mut Ctx)->bool{
+        FnMut(KeyEvent, Response<Cmd>, &mut Ctx, &mut Ui<Ctx, Cmd>){
         fn guard()->io::Result<impl Drop>{
             crossterm::terminal::enable_raw_mode()?;
             if let Err(x) = execute!(
@@ -70,7 +96,7 @@ impl<Ctx, Cmd> Ui<Ctx, Cmd>{
         }
         let _guard = guard()?;
         self.draw()?;
-        loop{
+        while !self.quit{
             let event = crossterm::event::read()?;
             match event{
                 Event::Resize(w, h) => {
@@ -78,8 +104,9 @@ impl<Ctx, Cmd> Ui<Ctx, Cmd>{
                     self.curr = ScreenBuffer::new(w, h);
                     self.nodes.resize(&self.widgets, w, h);
                     }
-                Event::Key(x) => if false == handler(self.widgets[self.nodes[self.focus].w].behaviour(x, ctx), ctx){
-                    break
+                Event::Key(x) => {
+                    let b = self.widgets[self.nodes[self.focus].w].behaviour(x, ctx);
+                    handler(x, b, ctx, self)
                 }
                 _ => {}
             }
@@ -95,7 +122,7 @@ impl<Ctx, Cmd> Ui<Ctx, Cmd>{
     }
 }
 
-fn background(rect:Rect, screen:&mut ScreenBuffer){
+pub fn background(rect:Rect, screen:&mut ScreenBuffer){
     rect.fill(Cell::default(), screen);
 }
 pub fn new<C, E>(direction:Direction, build:impl FnOnce(Empty<'_, C, E>)->NonEmpty<'_, C, E>)->Ui<C, E>{
@@ -107,6 +134,7 @@ pub fn new<C, E>(direction:Direction, build:impl FnOnce(Empty<'_, C, E>)->NonEmp
         widgets,
         old: ScreenBuffer::new(w, h),
         curr: ScreenBuffer::new(w, h),
+        quit: false,
     };
     build(Empty::new(&mut puffin.nodes, &mut puffin.widgets));
     puffin.nodes.recalc(&puffin.widgets, ROOT);
