@@ -301,27 +301,6 @@ pub mod nodes{
         }
     }
     impl S{
-        pub(crate) fn add_empty<C, E>(
-            ns:&mut Nodes,
-            ws:&Widgets<C, E>,
-            direction:Direction,
-            p:Sidx,
-            background:Background,
-            b:Bounds
-        )->Sidx{
-            let i =
-                ns.s.insert(S{
-                        parent:p.into(),
-                        focus:0,
-                        direction,
-                        r:Rect::ZERO,
-                        children:vec![],
-                        b,
-                        background,
-                    });
-            ns.recalc(ws, i);
-            i
-        }
         pub fn add<C, E>(
             ns:&mut Nodes,
             ws:&mut Widgets<C, E>,

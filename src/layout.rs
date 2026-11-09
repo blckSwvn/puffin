@@ -241,7 +241,7 @@ impl Nodes{
     pub fn change_widget<C, E>(&mut self, f:Lidx, widgets: &mut Widgets<C, E>, w:Box<dyn Widget<C, E>>){
         widgets.replace(self[f].w, w);
     }
-    fn propegate_fit<C, E>(&mut self, ws:&Widgets<C, E>, i:Sidx)->Sidx{
+    pub fn propegate_fit<C, E>(&mut self, ws:&Widgets<C, E>, i:Sidx)->Sidx{
         let (c, d) = {let Split{direction:d, children:c, ..} = &mut self[i]; (std::mem::take(c), *d)};
         let (mut w, mut h) = (0, 0);
         for c in c.iter() {

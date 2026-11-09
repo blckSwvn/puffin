@@ -5,7 +5,7 @@ mod builder;
 use std::io::{self, stdout};
 pub use builder::*;
 
-pub use layout::{Rect, Direction, leaf::Bounds as LeafBounds, leaf::Bound as LeafBound};
+pub use layout::{Rect, Direction, leaf};
 use layout::*;
 use storage::*;
 use storage::{
@@ -109,6 +109,7 @@ pub fn new<C, E>(direction:Direction, build:impl FnOnce(Empty<'_, C, E>)->NonEmp
         curr: ScreenBuffer::new(w, h),
     };
     build(Empty::new(&mut puffin.nodes, &mut puffin.widgets));
+    puffin.nodes.recalc(&puffin.widgets, ROOT);
     puffin
 } 
 
