@@ -66,7 +66,7 @@ impl<Ctx, Cmd> Ui<Ctx, Cmd>{
         self.nodes.split(&mut self.widgets, d, self.focus, w, background, split_b);
     }
     pub fn quit(&mut self){
-        self.quit = false;
+        self.quit = true;
     }
 }
 impl<Ctx, Cmd> Ui<Ctx, Cmd>{

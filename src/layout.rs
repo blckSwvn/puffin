@@ -459,18 +459,31 @@ impl Nodes{
     ){
         Leaf::split(self, ws, d, f, w, background, split_b);
     }
-    pub fn close<C, E>(&mut self, ws:&mut Widgets<C, E>, f:&mut Lidx){
+    pub fn close<C, E>(&mut self, ws:&mut Widgets<C, E>, f:&mut Lidx) -> bool {
+        fn leaf_count(n: &Nodes, i: Nidx) -> usize {
+            match i {
+                Nidx::L(_) => 1,
+                Nidx::S(s) => n[s].children.iter()
+                    .map(|&child| leaf_count(n, child))
+                    .sum(),
+            }
+        }
+        if leaf_count(self, Nidx::S(ROOT)) <= 1 {
+            return false;
+        }
+
         let p = self[*f].parent;
         let w = self[*f].w;
         self[p].children.retain(|x| *x != (*f).into());
         let last = self.prune(ws, *f);
         ws.remove(w);
         self.l.remove(*f);
-        let mut i = (*f).into();
-        while let Nidx::S(_) = i{
-            i = self[last].children[self[last].focus as usize]
+        let mut i = last.into();
+        while let Nidx::S(s) = i {
+            i = self[s].children[self[s].focus as usize]
         }
         let Nidx::L(x) = i else{unreachable!()};
         *f = x;
+        true
     }
 }
