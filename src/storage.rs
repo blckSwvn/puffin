@@ -254,6 +254,10 @@ pub mod nodes{
         }
     }
     impl Nodes{
+        pub fn is_empty(&self) -> bool {
+            self.s[ROOT].children.is_empty()
+        }
+
         pub fn new<C, E>(w:u16, h:u16, widgets:&mut Widgets<C, E>, direction:Direction, background: Background)->Self{
             let (l, mut s) = (Fvec::new(), Fvec::new());
             s.insert(S{parent:None, r:Rect{x:0, y:0, w, h}, direction, children:vec![], focus:0, background, 

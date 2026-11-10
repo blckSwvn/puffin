@@ -95,6 +95,7 @@ impl<Ctx, Cmd> Ui<Ctx, Cmd>{
             Ok(T)
         }
         let _guard = guard()?;
+        assert!(false);
         self.draw()?;
         while !self.quit{
             let event = crossterm::event::read()?;
