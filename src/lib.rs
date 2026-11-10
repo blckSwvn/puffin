@@ -69,10 +69,31 @@ impl<Ctx, Cmd> Ui<Ctx, Cmd>{
         self.quit = true;
     }
 }
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering}
+};
+fn install_panic_hook(restored:Arc<AtomicBool>){
+    let original_hook = std::panic::take_hook();
+
+    std::panic::set_hook(Box::new(move |info| {
+        let mut out = stdout();
+        let _ = execute!(
+            out,
+            LeaveAlternateScreen,
+            Show
+        );
+        let _ = disable_raw_mode();
+        let _ = out.flush();
+        original_hook(info);
+    }));
+}
 impl<Ctx, Cmd> Ui<Ctx, Cmd>{
     pub fn run<F>(&mut self, ctx: &mut Ctx, mut handler: F)->io::Result<()> where F:
         FnMut(KeyEvent, Response<Cmd>, &mut Ctx, &mut Ui<Ctx, Cmd>){
         fn guard()->io::Result<impl Drop>{
+            let x = Arc::new(AtomicBool::new(false));
+            install_panic_hook(x.clone());
             crossterm::terminal::enable_raw_mode()?;
             if let Err(x) = execute!(
                 stdout(),
@@ -84,18 +105,18 @@ impl<Ctx, Cmd> Ui<Ctx, Cmd>{
                 let _ = disable_raw_mode();
                 return Err(x)
             }
-            struct T;
+            struct T(Arc<AtomicBool>);
             impl Drop for T{
                 fn drop(&mut self) {
                     let mut out = stdout();
                     let _ = execute!(out, LeaveAlternateScreen, Show);
                     let _ = disable_raw_mode();
+                    let _ = out.flush();
                 }
             }
-            Ok(T)
+            Ok(T(x.clone()))
         }
         let _guard = guard()?;
-        assert!(false);
         self.draw()?;
         while !self.quit{
             let event = crossterm::event::read()?;
