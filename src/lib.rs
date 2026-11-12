@@ -67,6 +67,10 @@ impl<C, E> Ui<C, E>{
     pub fn split(&mut self, d:Direction, w:Box<dyn Widget<C, E>>, split_b: Bounds){
         self.nodes.split(&mut self.widgets, d, self.focus, w, background_default, split_b);
     }
+    pub fn add(&mut self, w:Box<dyn Widget<C, E>>){
+        let p = self.nodes[self.focus].parent;
+        Leaf::add(&mut self.nodes, &mut self.widgets, p, w);
+    }
     pub fn quit(&mut self){
         self.quit = true;
     }

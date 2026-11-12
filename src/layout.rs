@@ -166,17 +166,17 @@ impl Rect {
         self.y
     }
     pub fn bottom(self) -> u16 {
-        (self.y + self.h).saturating_sub(1)
+        self.y + self.h
     }
     pub fn left(self) -> u16 {
         self.x
     }
     pub fn right(self) -> u16 {
-        (self.x + self.w).saturating_sub(1)
+        self.x + self.w
     }
     pub fn fill<'a>(self, c:Box<str>, fg:Color, bg:Color, screen:&mut ScreenBuffer){
-        for x in self.x..=self.right(){
-            for y in self.y..=self.bottom(){
+        for x in self.x..self.right(){
+            for y in self.y..self.bottom(){
                 screen.set(self, x, y, c.clone(), fg, bg);
             }
         }
@@ -409,6 +409,14 @@ impl Nodes{
     }
     pub fn change_widget<C, E>(&mut self, f:Lidx, ws: &mut Widgets<C, E>, w:impl Widget<C, E> + 'static){
         ws.replace(self[f].w, Box::new(w));
+    }
+    pub fn add<C, E>(
+        &mut self,
+        ws:&mut Widgets<C, E>,
+        w:Box<dyn Widget<C, E>>,
+        p:Sidx,
+    ){
+        Leaf::add(self, ws, p, w);
     }
     pub fn split<C, E>(
         &mut self,

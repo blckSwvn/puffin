@@ -321,7 +321,6 @@ pub mod nodes{
             background:Background,
             b:Bounds,
         )->(Lidx, Sidx){
-            // let background = Box::new(background);
             let s = ns.s.insert(S{parent:p.into(), focus:0, direction, r:Rect::ZERO, children:vec![], b, background});
             ns[p].children.push(s.into());
             let w = ws.insert(w);
