@@ -149,7 +149,6 @@ impl<C, E> Ui<C, E>{
     fn draw(&mut self)->std::io::Result<()>{
         sketch(&self.nodes, &mut self.widgets, self.focus, &mut self.curr);
         self.curr.draw(&mut self.old)?;
-        stdout().flush()?;
         Ok(())
     }
 }

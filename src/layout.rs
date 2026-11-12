@@ -174,10 +174,10 @@ impl Rect {
     pub fn right(self) -> u16 {
         self.x + self.w
     }
-    pub fn fill<'a>(self, c:Box<str>, fg:Color, bg:Color, screen:&mut ScreenBuffer){
+    pub fn fill<'a>(self, c:&str, fg:Color, bg:Color, screen:&mut ScreenBuffer){
         for x in self.x..self.right(){
             for y in self.y..self.bottom(){
-                screen.set(self, x, y, c.clone(), fg, bg);
+                screen.set(self, x, y, c, fg, bg);
             }
         }
     }
