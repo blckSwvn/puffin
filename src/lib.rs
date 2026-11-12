@@ -26,7 +26,7 @@ use crossterm::{
 };
 pub use screen::{ScreenBuffer, Cell};
 
-pub trait Widget<Ctx, Cmd>{
+pub trait Widget<Ctx, E>{
     fn new(ctx: &mut Ctx) -> Self where Self: Sized;
     fn draw(&mut self, r:Rect, screen:&mut ScreenBuffer, focused:bool);
     fn bounds(&self)->leaf::Bounds;
@@ -34,7 +34,7 @@ pub trait Widget<Ctx, Cmd>{
         &mut self,
         k: KeyEvent,
         ctx: &mut Ctx,
-    ) -> Response<Cmd>;
+    ) -> Response<E>;
 }
 pub type Background = fn(Rect, &mut ScreenBuffer);
 pub struct Ui<C, E>{
@@ -52,18 +52,20 @@ pub enum Response<Cmd>{
 }
 use std::io::Write;
 
-impl<Ctx, Cmd> Ui<Ctx, Cmd>{
+impl<C, E> Ui<C, E>{
     pub fn focus(&mut self, d:FocusDirection){
         self.nodes.focus(&mut self.focus, d);
     }
     pub fn close(&mut self){
-        self.nodes.close(&mut self.widgets, &mut self.focus);
+        if let Err(_) = self.nodes.close(&mut self.widgets, &mut self.focus){
+            self.quit()
+        }
     }
-    pub fn change_widget(&mut self, w:impl Widget<Ctx, Cmd> + 'static){
+    pub fn change_widget(&mut self, w:impl Widget<C, E> + 'static){
         self.nodes.change_widget(self.focus, &mut self.widgets, w);
     }
-    pub fn split(&mut self, d:Direction, w:Box<dyn Widget<Ctx, Cmd>>, split_b: Bounds){
-        self.nodes.split(&mut self.widgets, d, self.focus, w, background, split_b);
+    pub fn split(&mut self, d:Direction, w:Box<dyn Widget<C, E>>, split_b: Bounds){
+        self.nodes.split(&mut self.widgets, d, self.focus, w, background_default, split_b);
     }
     pub fn quit(&mut self){
         self.quit = true;
@@ -73,26 +75,28 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering}
 };
-fn install_panic_hook(restored:Arc<AtomicBool>){
-    let original_hook = std::panic::take_hook();
-
-    std::panic::set_hook(Box::new(move |info| {
-        let mut out = stdout();
-        let _ = execute!(
-            out,
-            LeaveAlternateScreen,
-            Show
-        );
-        let _ = disable_raw_mode();
-        let _ = out.flush();
-        original_hook(info);
-    }));
-}
-impl<Ctx, Cmd> Ui<Ctx, Cmd>{
-    pub fn run<F>(&mut self, ctx: &mut Ctx, mut handler: F)->io::Result<()> where F:
-        FnMut(KeyEvent, Response<Cmd>, &mut Ctx, &mut Ui<Ctx, Cmd>){
+impl<C, E> Ui<C, E>{
+    pub fn run<F>(&mut self, ctx: &mut C, mut handler: F)->io::Result<()> where F:
+        FnMut(KeyEvent, Response<E>, &mut C, &mut Ui<C, E>){
         fn guard()->io::Result<impl Drop>{
             let x = Arc::new(AtomicBool::new(false));
+            fn install_panic_hook(restored:Arc<AtomicBool>){
+                let original_hook = std::panic::take_hook();
+
+                std::panic::set_hook(Box::new(move |info| {
+                    if !restored.swap(true, Ordering::Acquire){
+                        let mut out = stdout();
+                        let _ = execute!(
+                            out,
+                            LeaveAlternateScreen,
+                            Show
+                        );
+                        let _ = disable_raw_mode();
+                        let _ = out.flush();
+                    }
+                    original_hook(info);
+                }));
+            }
             install_panic_hook(x.clone());
             crossterm::terminal::enable_raw_mode()?;
             if let Err(x) = execute!(
@@ -108,10 +112,12 @@ impl<Ctx, Cmd> Ui<Ctx, Cmd>{
             struct T(Arc<AtomicBool>);
             impl Drop for T{
                 fn drop(&mut self) {
-                    let mut out = stdout();
-                    let _ = execute!(out, LeaveAlternateScreen, Show);
-                    let _ = disable_raw_mode();
-                    let _ = out.flush();
+                    if !self.0.swap(true, Ordering::SeqCst){
+                        let mut out = stdout();
+                        let _ = execute!(out, LeaveAlternateScreen, Show);
+                        let _ = disable_raw_mode();
+                        let _ = out.flush();
+                    }
                 }
             }
             Ok(T(x.clone()))
@@ -144,21 +150,21 @@ impl<Ctx, Cmd> Ui<Ctx, Cmd>{
     }
 }
 
-pub fn background(rect:Rect, screen:&mut ScreenBuffer){
+pub fn background_default(rect:Rect, screen:&mut ScreenBuffer){
     rect.fill(Cell::default(), screen);
 }
-pub fn new<C, E>(direction:Direction, build:impl FnOnce(Empty<'_, C, E>)->NonEmpty<'_, C, E>)->Ui<C, E>{
+pub fn new<C, E>(direction:Direction, build:impl FnOnce(Builder<'_, C, E, Empty>)->Builder<'_, C, E, NonEmpty>)->Ui<C, E>{
     let (w, h) = crossterm::terminal::size().unwrap();
     let mut widgets = Widgets::new();
     let mut puffin = Ui{
         focus:FOCUS,
-        nodes: Nodes::new(w, h, &mut widgets, direction, background),
+        nodes: Nodes::new(w, h, &mut widgets, direction, background_default),
         widgets,
         old: ScreenBuffer::new(w, h),
         curr: ScreenBuffer::new(w, h),
         quit: false,
     };
-    build(Empty::new(&mut puffin.nodes, &mut puffin.widgets));
+    build(Builder::new(&mut puffin.nodes, &mut puffin.widgets));
     puffin.nodes.recalc(&puffin.widgets, ROOT);
     puffin
 } 

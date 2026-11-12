@@ -11,6 +11,7 @@ mod fvec{ //freelist vec
         pub const fn new(i:u16)->Self{
             Self{
                 i, m:PhantomData,
+                #[cfg(debug_assertions)]
                 generation:0,
             } 
         }
@@ -54,7 +55,8 @@ mod fvec{ //freelist vec
     impl<T> IndexMut<Idx<T>> for Fvec<T> {
         fn index_mut(&mut self, i:Idx<T>)->&mut T{
             let slot = &mut self.used[i.i as usize];
-            assert_eq!(slot.generation, i.generation, "Stale fvec index");
+            #[cfg(debug_assertions)]
+            assert_eq!( slot.generation, i.generation, "Stale fvec index");
             slot.val.as_mut().unwrap()
         }
     }
@@ -77,7 +79,12 @@ mod fvec{ //freelist vec
                     #[cfg(debug_assertions)]
                     generation:0,
                 });
-                Idx{i:i as u16, m:PhantomData, generation:0}
+                Idx{
+                    i:i as u16,
+                    m:PhantomData,
+                    #[cfg(debug_assertions)]
+                    generation:0
+                }
             }
         }
         pub fn remove(&mut self, i:Idx<T>)->T{

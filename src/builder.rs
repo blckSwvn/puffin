@@ -1,74 +1,51 @@
 use super::*;
-struct Builder<'a, C, E>{
+use std::marker::PhantomData;
+pub struct Builder<'a, C, E, T>{
     nodes: &'a mut Nodes,
     widgets: &'a mut Widgets<C, E>,
     parent:Sidx,
+    marker:PhantomData<fn()->T>,
 }
 
-pub struct Empty<'a, C, E>(Builder<'a, C, E>);
-pub struct NonEmpty<'a, C, E>(Builder<'a, C, E>);
+pub struct Empty;
+pub struct NonEmpty;
 
-impl<'a, C, E> Empty<'a, C, E>{
-    pub fn new(nodes:&'a mut Nodes, widgets:&'a mut Widgets<C, E>)->Empty<'a, C, E>{
-        Empty(Builder{ nodes, widgets, parent: ROOT})
+impl <'a, C, E, T> Builder<'a, C, E, T>{
+    pub fn add(self, w:impl Widget<C, E> + 'static)->Builder<'a, C, E, NonEmpty>{
+        add(self.nodes, self.widgets, self.parent, w);
+        Builder{nodes:self.nodes, widgets:self.widgets, parent:self.parent, marker:PhantomData}
     }
-    pub fn add(self, w:impl Widget<C, E> + 'static)->NonEmpty<'a, C, E>{
-        add(self.0.nodes, self.0.widgets, self.0.parent, w);
-        NonEmpty(self.0).finish()
-    }
-    pub fn bounds(self, bounds:Bounds)->Empty<'a, C, E>{
-        Empty(self.0.bounds(bounds))
-    }
-    pub fn background(&mut self, background:Background)->&mut Self{
-        self.0.background(background);
+    pub fn background(self, bg:Background)->Self{
+        self.nodes[self.parent].background = bg;
         self
     }
-    pub fn vertical<T>(self, build:T)->NonEmpty<'a, C, E>
-        where T: FnOnce(Empty<'a, C, E>)->NonEmpty<'a, C, E>{
-            let parent = add_empty(self.0.nodes, Direction::Vertical, self.0.parent, background, Bounds::default());
-            build(Empty(Builder{nodes: self.0.nodes, widgets: self.0.widgets, parent})).finish()
+    pub fn vertical<B>(self, build:B)->Builder<'a, C, E, NonEmpty>
+        where B: FnOnce(Builder<'a, C, E, T>)->Builder<'a, C, E, NonEmpty>{
+            let parent = add_empty(self.nodes, Direction::Vertical, self.parent, background_default, Bounds::default());
+            build(Builder{nodes: self.nodes, widgets: self.widgets, parent, marker:PhantomData}).finish()
     }
-    pub fn horizontal<T>(self, build:T)->NonEmpty<'a, C, E>
-        where T: FnOnce(Empty<'a, C, E>)->NonEmpty<'a, C, E>{
-            let parent = add_empty(self.0.nodes, Direction::Horizontal, self.0.parent, background, Bounds::default());
-            build(Empty(Builder{nodes: self.0.nodes, widgets: self.0.widgets, parent})).finish()
+    pub fn horizontal<B>(self, build:B)->Builder<'a, C, E, NonEmpty>
+        where B: FnOnce(Builder<'a, C, E, T>)->Builder<'a, C, E, NonEmpty>{
+            let parent = add_empty(self.nodes, Direction::Horizontal, self.parent, background_default, Bounds::default());
+            build(Builder{nodes: self.nodes, widgets: self.widgets, parent, marker:PhantomData}).finish()
+    }
+}
+impl<'a, C, E> Builder<'a, C, E, Empty>{
+    pub fn bounds(self, bounds:Bounds){
+        self.nodes[self.parent].b = bounds;
+    }
+    pub fn new(nodes:&'a mut Nodes, widgets:&'a mut Widgets<C, E>)->Builder<'a, C, E, Empty>{
+        Builder{ nodes, widgets, parent: ROOT, marker:PhantomData}
     }
 }
 
-impl<'a, C, E> NonEmpty<'a, C, E>{
+impl<'a, C, E> Builder<'a, C, E, NonEmpty>{
     fn finish(self)->Self{
-        self.0.nodes.propegate_fit(self.0.widgets, self.0.parent);
+        self.nodes.propegate_fit(self.widgets, self.parent);
         self
-    }
-    pub fn add(self, w:impl Widget<C, E> + 'static)->Self{
-        add(self.0.nodes, self.0.widgets, self.0.parent, w);
-        self
-    }
-    pub fn bounds(self, bounds:Bounds)->Self{
-        NonEmpty(self.0.bounds(bounds)).finish()
-    }
-    pub fn horizontal<T>(self, build:T)->Self
-        where T: FnOnce(Empty<'a, C, E>)->NonEmpty<'a, C, E>{
-            let parent = add_empty(self.0.nodes, Direction::Horizontal, self.0.parent, background, Bounds::default());
-            build(Empty(Builder { nodes: self.0.nodes, widgets: self.0.widgets, parent})).finish()
-    }
-    pub fn vertical<T>(self, build:T)->Self
-        where T: FnOnce(Empty<'a, C, E>)->NonEmpty<'a, C, E>{
-            let parent = add_empty(self.0.nodes, Direction::Vertical, self.0.parent, background, Bounds::default());
-            build(Empty(Builder { nodes: self.0.nodes, widgets: self.0.widgets, parent})).finish()
     }
 }
 
-impl<'a, C, E> Builder<'a, C, E>{
-    pub fn background(&mut self, background: Background)->&mut Self{
-        self.nodes[self.parent].background = background;
-        self
-    }
-    pub fn bounds(self, bounds:Bounds)->Self{
-        self.nodes[self.parent].b = bounds.into();
-        self
-    }
-}
 fn add<C, E>(ns:&mut Nodes, ws:&mut Widgets<C, E>, p:Sidx, w:impl Widget<C, E> + 'static)->Lidx{
     let w = ws.insert(Box::new(w));
     let i = ns.l.insert(Leaf{parent:p, w, r:Rect::ZERO });

@@ -1,4 +1,6 @@
 pub enum FocusDirection { Left, Right, Up, Down, }
+use std::process::Child;
+
 use crate::{Background, Cell, ScreenBuffer, Widget, nodes::Nodes, storage::nodes::{Lidx, Nidx, ROOT, Sidx}, widgets::Widgets
 };
 
@@ -312,7 +314,7 @@ impl Nodes{
                 match d{
                     Direction::Vertical   => c.h += add,
                     Direction::Horizontal => c.w += add,
-                }
+                    }
                 used += add;
                 if size + add >= max{
                     *child = None;
@@ -321,12 +323,12 @@ impl Nodes{
             left = left.saturating_sub(used);
             if used == 0 {break}
         }
-                for c in children.iter(){
-                    if let Nidx::S(c) = c{
-                        self.distrobute(ws, *c);
-                    }
-                }
-                self[i].children = children;
+        for c in children.iter(){
+            if let Nidx::S(c) = c{
+                self.distrobute(ws, *c);
+            }
+        }
+        self[i].children = children;
     }
     fn recalc_pos(&mut self, i:Sidx){
         let (c, d, mut r) = {let Split{children:c, direction:d, r, ..} = &mut self[i]; (std::mem::take(c), *d, *r)};
@@ -345,50 +347,10 @@ impl Nodes{
         }
         self[i].children = c;
     }
-pub fn recalc<C, E>(&mut self, ws:&Widgets<C, E>, i: Sidx) {
+    pub fn recalc<C, E>(&mut self, ws:&Widgets<C, E>, i: Sidx) {
         let i = self.propegate_fit(ws, i);
         self.distrobute(ws, i);
         self.recalc_pos(i);
-    }
-    fn prune<C, E>(&mut self, ws:&Widgets<C, E>, i: Lidx) -> Sidx{
-        fn prune<C, E>(n: &mut Nodes, ws:&Widgets<C, E>, i: Nidx) -> Sidx{
-            let p = match i {
-                Nidx::L(i) => n[i].parent,
-                Nidx::S(i) => match n[i].parent {
-                    Some(s) => s,
-                    _ => i,
-                },
-            };
-            let Some(pp) = n[p].parent else { return p };
-            match n[p].children.len() {
-                1 => {
-                    let x = n[p].children[0];
-                    let i = n[pp].children.iter()
-                        .position(|c| *c == Nidx::S(p))
-                        .unwrap();
-                    n[pp].children[i] = x;
-                    match x {
-                        Nidx::S(i) => n[i].parent = Some(pp),
-                        Nidx::L(i) => n[i].parent = pp,
-                    }
-                    n.s.remove(p);
-                    prune(n, ws, Nidx::S(pp))
-                }
-                0 => {
-                    n[pp].children.retain(|c| *c != Nidx::S(p));
-                    n[pp].focus = if n[pp].children.len() == 0 { 0 } else {
-                        u16::min(n[pp].focus, (n[pp].children.len() - 1) as u16)
-                    };
-                    n.s.remove(p);
-                    prune(n, ws, Nidx::S(pp))
-                }
-                _ => {
-                    n.recalc(ws, p);
-                    return p;
-                }
-            }
-        }
-        prune(self, ws, i.into())
     }
 }
 
@@ -459,18 +421,62 @@ impl Nodes{
     ){
         Leaf::split(self, ws, d, f, w, background, split_b);
     }
-    pub fn close<C, E>(&mut self, ws:&mut Widgets<C, E>, f:&mut Lidx){
-        let p = self[*f].parent;
-        let w = self[*f].w;
-        self[p].children.retain(|x| *x != (*f).into());
-        let last = self.prune(ws, *f);
-        ws.remove(w);
-        self.l.remove(*f);
-        let mut i = last.into();
-        while let Nidx::S(s) = i {
-            i = self[s].children[self[s].focus as usize]
+    pub fn close<C, E>(&mut self, ws:&mut Widgets<C, E>, f:&mut Lidx)->Result<(), ()>{
+        let last = {
+            let p = self[*f].parent;
+            let Split {focus, children: c, ..} = &mut self[p];
+            let pos = c.iter().position(|x| *x == (*f).into()).unwrap();
+            c.remove(pos);
+            *focus = if *focus > pos as u16{
+                *focus - 1
+            }else{
+                (*focus).min((c.len().saturating_sub(1)) as u16)
+            };
+            self.l.remove(*f);
+            prune(self, p)
+        };
+        let last = self.propegate_fit(ws, last);
+        self.recalc(ws, last);
+        return fix_focus(self, f, last);
+        fn prune(ns:&mut Nodes, p:Sidx)->Sidx{
+            let pp = match ns[p].parent{ Some(x) => x, _ => return p };
+            match ns[p].children.len(){
+                0 => {
+                    let Split { focus:f, children: c, ..} = &mut ns[pp];
+                    let pos = c.iter().position(|x| *x == p.into()).unwrap();
+                    c.remove(pos);
+                    *f = if *f > pos as u16{
+                        *f - 1
+                    } else {
+                        (*f).min((c.len().saturating_sub(1)) as u16)
+                    };
+                    ns.s.remove(p);
+                    prune(ns, pp)
+                }
+                1 => {
+                    let c = ns[p].children[0];
+                    match c{
+                        Nidx::S(x) => ns[x].parent = pp.into(),
+                        Nidx::L(x) => ns[x].parent = pp,
+                    }
+                    ns[pp].children.retain(|x| *x != p.into());
+                    ns.s.remove(p);
+                    ns[pp].children.push(c);
+                    prune(ns, pp)
+                }
+                _ => {
+                    return p
+                }
+            }
         }
-        let Nidx::L(x) = i else{unreachable!()};
-        *f = x;
+        fn fix_focus(ns:&mut Nodes, i:&mut Lidx, last:Sidx)->Result<(), ()>{
+            let mut last = last.into();
+            while let Nidx::S(x) = last{
+                last = *ns[x].children.get(ns[x].focus as usize).ok_or(())?
+            }
+            let Nidx::L(s) = last else {unreachable!()};
+            *i = s;
+            Ok(())
+        }
     }
 }
