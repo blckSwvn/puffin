@@ -7,24 +7,44 @@ use crossterm::{
 use std::io::stdout;
 pub const FG: Color = Color::White;
 pub const BG: Color = Color::Rgb { r: 0, g: 0, b: 0 };
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct Cell {
-    pub c: char,
-    pub fg: Color,
-    pub bg: Color,
+#[derive(Clone, PartialEq, Eq)]
+pub enum ContKind{
+    Empty,
+    Grapheme(String),
+    Continue,
+}
+#[derive(Clone, PartialEq, Eq)]
+struct Cell {
+    c: ContKind,
+    fg: Color,
+    bg: Color,
 }
 impl Default for Cell {
     fn default() -> Self {
         Self {
-            c: ' ',
+            c: ContKind::Empty,
             fg: FG,
             bg: BG,
         }
     }
 }
 impl Cell{
-    pub const fn new(c:char, fg:Color, bg:Color)->Cell{
+    pub fn new(c:ContKind, fg:Color, bg:Color)->Cell{
         Cell { c, fg, bg }
+    }
+    fn grapheme(s:&str, fg:Color, bg:Color)->Self{
+        Self{
+            c:ContKind::Grapheme(s.into()),
+            fg,
+            bg,
+        }
+    }
+    fn continuation(fg:Color, bg:Color)->Self{
+        Self{
+            c:ContKind::Continue,
+            fg,
+            bg,
+        }
     }
 }
 pub struct ScreenBuffer {
@@ -33,21 +53,52 @@ pub struct ScreenBuffer {
     pub h: u16,
 }
 
+use unicode_width::UnicodeWidthStr;
+use unicode_segmentation::UnicodeSegmentation;
 impl ScreenBuffer {
     pub fn new(w:u16, h:u16)->Self{
-        Self { cells: vec![Cell::new('�', BG, BG); (w*h) as usize], w, h}
+        Self { cells: vec![Cell::default(); (w*h) as usize], w, h}
     }
     fn clear_buffer(&mut self) {
         self.cells.fill(Cell::default())
     }
-    pub fn set_string(&mut self, r: Rect, x: u16, y: u16, s: &str, fg: Color, bg: Color) {
-        let cur = self;
-        for (i, c) in s.chars().enumerate() {
-            let xx = x.saturating_add(i as u16);
-            cur.set_cell(r, xx, y, Cell { c, fg, bg });
+    pub fn set<'a>(&mut self, r: Rect, x: u16, y: u16, s: Box<str>, fg: Color, bg: Color) {
+        let mut c = x;
+        for grapheme in s.graphemes(true){
+            let w = grapheme.width() as u16;
+            if w == 0 {continue;}
+            if c >= r.right() || c >= self.w{
+                break
+            }
+            if c + w > r.right() || c + w > self.w{
+                break
+            }
+            self.set_cell(r, c, y, Cell { c: ContKind::Grapheme(grapheme.to_string()), fg, bg });
+            for o in 1..w{
+                self.set_cell(r, c + o, y, Cell { c: ContKind::Continue, fg, bg });
+            }
+            c += w;
         }
     }
-    pub fn set_cell(&mut self, r: Rect, x: u16, y: u16, cell: Cell) {
+    fn clear_grapheme_at(&mut self, x: u16, y: u16) {
+        if x >= self.w || y >= self.h { return; }
+        let idx = (y as usize * self.w as usize) + x as usize;
+        let start_x = match &self.cells[idx].c {
+            ContKind::Continue => x.saturating_sub(1),
+            ContKind::Grapheme(_) => x,
+            ContKind::Empty => return,
+        };
+        let start_idx = (y as usize * self.w as usize) + start_x as usize;
+        let width = match &self.cells[start_idx].c {
+            ContKind::Grapheme(s) => s.width() as u16,
+            _ => return,
+        };
+        for offset in 0..width {
+            let clear_idx = (y as usize * self.w as usize) + (start_x + offset) as usize;
+            self.cells[clear_idx] = Cell::default();
+        }
+    }
+    fn set_cell(&mut self, r: Rect, x: u16, y: u16, cell: Cell) {
         if r.w == 0
             || r.h == 0
             || x < r.x
@@ -63,56 +114,44 @@ impl ScreenBuffer {
         self.cells[idx as usize] = cell;
     }
     pub fn draw(&mut self, old: &mut ScreenBuffer) -> std::io::Result<()> {
-        let mut c = self;
-        let mut p = old;
         let mut out = stdout().lock();
-        let mut current_fg = None;
-        let mut current_bg = None;
-
-        for y in 0..c.h {
+        for y in 0..self.h {
             let mut x = 0;
-            while x < c.w {
-                let idx = (y * c.w + x) as usize;
-                let old = p.cells[idx];
-                let new = c.cells[idx];
-                if new == old {
+            while x < self.w {
+                let idx = (y as usize * self.w as usize) + x as usize;
+                let new = &self.cells[idx];
+                let prev = &old.cells[idx];
+                if new == prev {
                     x += 1;
                     continue;
                 }
-                let start_x = x;
-                let style_fg = new.fg;
-                let style_bg = new.bg;
-                let mut line = String::new();
-                while x < c.w {
-                    let idx = (y * c.w + x) as usize;
-                    let old = p.cells[idx];
-                    let new = c.cells[idx];
-                    //stop if unchanged
-                    if new == old {
-                        break;
-                    }
-                    // stop if style changes
-                    if new.fg != style_fg || new.bg != style_bg {
-                        break;
-                    }
-                    line.push(new.c);
+                if matches!(new.c, ContKind::Continue) {
                     x += 1;
+                    continue;
                 }
-                queue!(out, MoveTo(start_x, y))?;
-                if current_fg != Some(style_fg) {
-                    queue!(out, SetForegroundColor(style_fg))?;
-                    current_fg = Some(style_fg);
+                queue!(
+                    out,
+                    MoveTo(x, y),
+                    SetForegroundColor(new.fg),
+                    SetBackgroundColor(new.bg)
+                )?;
+                match &new.c {
+                    ContKind::Grapheme(s) => {
+                        queue!(out, Print(s))?;
+                        x += s.width() as u16;
+                    }
+                    ContKind::Empty => {
+                        queue!(out, Print(" "))?;
+                        x += 1;
+                    }
+                    ContKind::Continue => unreachable!(),
                 }
-                if current_bg != Some(style_bg) {
-                    queue!(out, SetBackgroundColor(style_bg))?;
-                    current_bg = Some(style_bg);
-                }
-                queue!(out, Print(line))?;
             }
         }
         queue!(out, ResetColor)?;
-        std::mem::swap(&mut c, &mut p);
-        c.clear_buffer();
+        std::mem::swap(&mut self.cells, &mut old.cells);
+        self.clear_buffer();
         Ok(())
     }
 }
+

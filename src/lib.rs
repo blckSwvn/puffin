@@ -24,7 +24,7 @@ use crossterm::{
         disable_raw_mode
     }
 };
-pub use screen::{ScreenBuffer, Cell};
+pub use screen::ScreenBuffer;
 
 pub trait Widget<Ctx, E>{
     fn new(ctx: &mut Ctx) -> Self where Self: Sized;
@@ -150,8 +150,9 @@ impl<C, E> Ui<C, E>{
     }
 }
 
+use crossterm::style::Color;
 pub fn background_default(rect:Rect, screen:&mut ScreenBuffer){
-    rect.fill(Cell::default(), screen);
+    rect.fill(" ".into(), Color::Black, Color::Black, screen);
 }
 pub fn new<C, E>(direction:Direction, build:impl FnOnce(Builder<'_, C, E, Empty>)->Builder<'_, C, E, NonEmpty>)->Ui<C, E>{
     let (w, h) = crossterm::terminal::size().unwrap();

@@ -1,7 +1,6 @@
 pub enum FocusDirection { Left, Right, Up, Down, }
-use std::process::Child;
 
-use crate::{Background, Cell, ScreenBuffer, Widget, nodes::Nodes, storage::nodes::{Lidx, Nidx, ROOT, Sidx}, widgets::Widgets
+use crate::{Background, ScreenBuffer, Widget, nodes::Nodes, storage::nodes::{Lidx, Nidx, ROOT, Sidx}, widgets::Widgets
 };
 
 pub mod leaf{
@@ -155,6 +154,7 @@ pub struct Rect {
     pub w: u16,
     pub h: u16,
 }
+use crossterm::style::Color;
 impl Rect {
     pub const ZERO: Self = Self {
         x: 0,
@@ -174,10 +174,10 @@ impl Rect {
     pub fn right(self) -> u16 {
         (self.x + self.w).saturating_sub(1)
     }
-    pub fn fill(self, c:Cell, screen:&mut ScreenBuffer){
+    pub fn fill<'a>(self, c:Box<str>, fg:Color, bg:Color, screen:&mut ScreenBuffer){
         for x in self.x..=self.right(){
             for y in self.y..=self.bottom(){
-                screen.set_cell(self, x, y, c);
+                screen.set(self, x, y, c.clone(), fg, bg);
             }
         }
     }
@@ -407,8 +407,8 @@ impl Nodes{
             }
         }
     }
-    pub fn change_widget<C, E>(&mut self, f:Lidx, widgets: &mut Widgets<C, E>, w:impl Widget<C, E> + 'static){
-        widgets.replace(self[f].w, Box::new(w));
+    pub fn change_widget<C, E>(&mut self, f:Lidx, ws: &mut Widgets<C, E>, w:impl Widget<C, E> + 'static){
+        ws.replace(self[f].w, Box::new(w));
     }
     pub fn split<C, E>(
         &mut self,
@@ -417,9 +417,9 @@ impl Nodes{
         f:Lidx,
         w:Box<dyn Widget<C, E>>,
         background:Background,
-        split_b:Bounds
+        b:Bounds
     ){
-        Leaf::split(self, ws, d, f, w, background, split_b);
+        Leaf::split(self, ws, d, f, w, background, b);
     }
     pub fn close<C, E>(&mut self, ws:&mut Widgets<C, E>, f:&mut Lidx)->Result<(), ()>{
         let last = {
