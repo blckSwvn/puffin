@@ -27,9 +27,10 @@ use crossterm::{
 pub use screen::ScreenBuffer;
 
 pub trait Widget<Ctx, E>{
-    fn new(ctx: &mut Ctx) -> Self where Self: Sized;
     fn draw(&mut self, r:Rect, screen:&mut ScreenBuffer, focused:bool);
-    fn bounds(&self)->leaf::Bounds;
+    fn bounds(&self)->leaf::Bounds{
+        leaf::Bounds::default()
+    }
     fn behaviour(
         &mut self,
         k: KeyEvent,
