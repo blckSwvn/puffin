@@ -1,10 +1,9 @@
 pub enum FocusDirection { Left, Right, Up, Down, }
-
-use crate::{Background, ScreenBuffer, Widget, nodes::Nodes, storage::nodes::{Lidx, Nidx, ROOT, Sidx}, widgets::Widgets
+use crate::{Background, ScreenBuffer, Widget, nodes::Nodes, storage::nodes::{Lidx, Nidx, Sidx, Pidx}, widgets::Widgets
 };
 
 pub mod leaf{
-    use super::Rect;
+    use super::{Rect, Parent};
     use crate::storage::{nodes::Sidx, widgets::Widx};
     #[derive(Clone, Copy, PartialEq)]
     //subset of split bounds since leaves cant have children therefore shouldnt be able to have
@@ -21,7 +20,7 @@ pub mod leaf{
         min_h:Bound,
     }
     pub struct Leaf{
-        pub parent: Sidx,
+        pub parent: Parent,
         pub w: Widx,
         pub r: Rect,
     }
@@ -78,19 +77,123 @@ pub mod leaf{
 pub use leaf::*;
 
 #[derive(Clone, Copy, PartialEq)]
-pub enum Direction {
+pub enum Direction{
     Horizontal,
     Vertical,
 }
-
+#[derive(Clone, Copy)]
+pub enum Parent{
+    S(Sidx),
+    P(Pidx),
+    R,
+}
+impl From<Sidx> for Parent{
+    fn from(value: Sidx) -> Self {
+        Self::S(value)
+    }
+}
+impl From<Pidx> for Parent{
+    fn from(value: Pidx) -> Self {
+        Self::P(value)
+    }
+}
+impl Parent{
+    pub fn children(self, ns:&Nodes)->&Vec<Nidx>{
+        match self{
+            Self::R => &ns.root.children,
+            Self::P(x) => &ns[x].children,
+            Self::S(x) => &ns[x].children,
+        }
+    }
+    pub fn mut_children(self, ns:&mut Nodes)->&mut Vec<Nidx>{
+        match self{
+            Self::R => &mut ns.root.children,
+            Self::P(x) => &mut ns[x].children,
+            Self::S(x) => &mut ns[x].children,
+        }
+    }
+    fn focus(self, ns:&Nodes)->u16{
+        match self{
+            Self::R => ns.root.focus,
+            Self::P(x) => ns[x].focus,
+            Self::S(x) => ns[x].focus,
+        }
+    }
+    fn mut_focus(self, ns:&mut Nodes)->&mut u16{
+        match self{
+            Self::R => &mut ns.root.focus,
+            Self::P(x) => &mut ns[x].focus,
+            Self::S(x) => &mut ns[x].focus,
+        }
+    }
+    fn parent(self, ns:&Nodes)->Option<Self>{
+        match self{
+            Self::R => None,
+            Self::P(x) => ns[x].parent.into(),
+            Self::S(x) => ns[x].parent.into(),
+        }
+    }
+}
+pub struct Root{
+    pub children:Vec<Nidx>,
+    pub direction: Direction,
+    pub background:Background,
+    pub focus:u16,
+    pub w:u16, pub h:u16,
+}
+impl Root{
+    const fn b(ns:&Nodes)->Bounds{
+        let w = ns.root.w;
+        let h = ns.root.h;
+        Bounds {
+            max_w: Bound::Absolute(w),
+            min_w: Bound::Absolute(w),
+            max_h: Bound::Absolute(h),
+            min_h:Bound::Absolute(h) 
+        }
+    }
+    const fn r(ns:&Nodes)->Rect{
+        Rect { x: 0, y: 0, w:ns.root.w, h:ns.root.h}
+    }
+}
 pub struct Split {
-    pub parent: Option<Sidx>,
-    pub focus: u16,
+    pub parent: Parent,
     pub children: Vec<Nidx>, //children cannot be left empty hard invariant
     pub direction: Direction,
     pub r: Rect,
     pub b: Bounds,
-    pub background: fn(Rect, &mut ScreenBuffer),
+    pub background: Background,
+    pub focus: u16,
+}
+pub struct Plane{
+    pub parent: Parent,
+    pub children: Vec<Nidx>,
+    pub direction: Direction,
+    pub r:Rect,
+    pub b:Bounds,
+    pub background:Background,
+    align:Alignments,
+    anchor:Anchors,
+    pub focus: u16,
+    z:u16,
+}
+pub struct Alignments{
+    x:Alignment,
+    y:Alignment,
+}
+pub struct Anchors{
+    x:Anchor,
+    y:Anchor,
+}
+pub enum Alignment{
+    Start,
+    Center,
+    End,
+}
+pub enum Anchor{
+    Absolute(u16),
+    ScreenRelative(f32),
+    ParentRelative(f32),
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -154,7 +257,7 @@ pub struct Rect {
     pub w: u16,
     pub h: u16,
 }
-use crossterm::style::Color;
+use crossterm::style::{Attributes, Color};
 impl Rect {
     pub const ZERO: Self = Self {
         x: 0,
@@ -174,10 +277,10 @@ impl Rect {
     pub fn right(self) -> u16 {
         self.x + self.w
     }
-    pub fn fill<'a>(self, c:&str, fg:Color, bg:Color, screen:&mut ScreenBuffer){
+    pub fn fill(self, c:&str, fg:Color, bg:Color, a:Attributes, screen:&mut ScreenBuffer){
         for x in self.x..self.right(){
             for y in self.y..self.bottom(){
-                screen.set(self, x, y, c, fg, bg);
+                screen.set(self, x, y, c, fg, bg, a);
             }
         }
     }
@@ -185,11 +288,25 @@ impl Rect {
 
 impl Nodes{
     pub fn resize<C, E>(&mut self, ws:&Widgets<C, E>, w: u16, h: u16) {
-        self[ROOT].r = Rect { w, h, x: 0, y: 0 };
-        self.recalc(ws, ROOT);
+        self.root.w = w;
+        self.root.h = h;
+        let c = std::mem::take(&mut self.root.children);
+        for c in &c{
+            let p = match *c{
+                Nidx::S(x)=>self[x].parent,
+                Nidx::L(x)=>self[x].parent,
+                Nidx::P(x)=>self[x].parent,
+            };
+            self.recalc(ws, p);
+        }
+        self.root.children = c;
     }
-    pub fn propegate_fit<C, E>(&mut self, ws:&Widgets<C, E>, i:Sidx)->Sidx{
-        let (c, d) = {let Split{direction:d, children:c, ..} = &mut self[i]; (std::mem::take(c), *d)};
+    pub fn propegate_fit<C, E>(&mut self, ws:&Widgets<C, E>, i:Parent)->Parent{
+        let (c, d, propegate_further) = match i{
+                Parent::S(x) => {let Split{direction:d,  children:c, ..} = &mut self[x]; (std::mem::take(c), *d, true)},
+                Parent::P(x) => {let Plane {direction:d, children:c, ..} = &mut self[x]; (std::mem::take(c), *d, false)},
+                Parent::R    => return i
+            };
         let (mut w, mut h) = (0, 0);
         for c in c.iter() {
             let b = c.bounds(self, ws);
@@ -248,30 +365,40 @@ impl Nodes{
                 }
             }
         }
-
-        if let Bound::Fit = self[i].b.min_w{
-            self[i].r.w = w;
-        }
-        if let Bound::Fit = self[i].b.max_w{
-            self[i].r.w = w;
-        }
-        if let Bound::Fit = self[i].b.min_h{
-            self[i].r.h = h;
-        }
-        if let Bound::Fit = self[i].b.max_h{
-            self[i].r.h = h;
-        }
-        self[i].children = c;
-        if let Some(p) = self[i].parent{
-            self.propegate_fit(ws, p)
-        }else{
-            i
-        }
+        let (b, r) = match i{
+                Parent::S(x) => {let Split{b, r, ..} = &mut self[x]; (*b, r)},
+                Parent::P(x) => {let Plane{b, r, ..} = &mut self[x]; (*b, r)},
+                Parent::R    => unreachable!()
+            };
+            if let Bound::Fit = b.min_w{
+                r.w = w;
+            }
+            if let Bound::Fit = b.max_w{
+               r.w = w;
+            }
+            if let Bound::Fit = b.max_h{
+               r.h = h;
+            }
+            match i{
+                Parent::S(x) => self[x].children = c,
+                Parent::P(x) => self[x].children = c,
+                Parent::R => unreachable!()
+            }
+            if propegate_further{
+                self.propegate_fit(ws, i)
+            }else{
+                i
+            }
     }
-    fn distrobute<C, E>(&mut self, ws:&Widgets<C, E>, i:Sidx){
-        let (children, d, parent_r, parent_b) = {
-            let Split{children:c, direction:d, r, b, ..} = &mut self[i];
-            (std::mem::take(c), *d, *r, *b)
+    fn distrobute<C, E>(&mut self, ws:&Widgets<C, E>, i:Parent){
+        let (children, d, parent_r, parent_b) = match i{
+            Parent::S(i) => {let Split{children:c, direction:d, r, b, ..} = &mut self[i]; (std::mem::take(c), *d, *r, *b)},
+            Parent::P(i) => {let Plane{children:c, direction:d, r, b, ..} = &mut self[i]; (std::mem::take(c), *d, *r, *b)},
+            Parent::R => {
+                let b = Root::b(self);
+                let r = Root::r(self);
+                let Root {children:c, direction:d, w, h, ..} = &mut self.root;
+                (std::mem::take(c), *d, r, b)},
         };
         let mut left = match d{
             Direction::Vertical => parent_r.h,
@@ -325,13 +452,22 @@ impl Nodes{
         }
         for c in children.iter(){
             if let Nidx::S(c) = c{
-                self.distrobute(ws, *c);
+                self.distrobute(ws, Parent::S(*c));
             }
         }
-        self[i].children = children;
+        match i{
+            Parent::P(i) => self[i].children = children,
+            Parent::S(i) => self[i].children = children,
+            Parent::R => unreachable!()
+        }
     }
-    fn recalc_pos(&mut self, i:Sidx){
-        let (c, d, mut r) = {let Split{children:c, direction:d, r, ..} = &mut self[i]; (std::mem::take(c), *d, *r)};
+    fn recalc_pos(&mut self, i:Parent){
+        let (c, d, mut r) = match i{
+            Parent::S(i) => {let Split{children:c, direction:d, r, ..} = &mut self[i]; (std::mem::take(c), *d, *r)}
+            Parent::R => {let r = Root::r(self); let Root { children:c, direction:d, .. } = &mut self.root; (std::mem::take(c), *d, r)}
+            Parent::P(i) => {let Plane {children:c, direction:d, r, .. } = &mut self[i]; (std::mem::take(c), *d, *r)}
+        };
+
         for c in c.iter(){
             c.r_mut(self).x = r.x;
             c.r_mut(self).y = r.y;
@@ -342,12 +478,12 @@ impl Nodes{
         }
         for c in c.iter(){
             if let Nidx::S(c) = c{
-                self.recalc_pos(*c);
+                self.recalc_pos((*c).into());
             }
         }
-        self[i].children = c;
+        *i.mut_children(self) = c;
     }
-    pub fn recalc<C, E>(&mut self, ws:&Widgets<C, E>, i: Sidx) {
+    pub fn recalc<C, E>(&mut self, ws:&Widgets<C, E>, i: Parent) {
         let i = self.propegate_fit(ws, i);
         self.distrobute(ws, i);
         self.recalc_pos(i);
@@ -360,21 +496,25 @@ impl Nodes{
         let mut curr = self[*f].parent;
 
         let target = 'search: loop {
-            let (parent, len) = {
-                let s = &self[curr];
-                (s.parent, s.children.len())
+            let (len, parent) = {
+                match curr{
+                    Parent::R => unreachable!(),
+                    Parent::S(x) => (self[x].children.len(), self[x].parent),
+                    Parent::P(x) => (self[x].children.len(), self[x].parent),
+                }
             };
 
             let forward = matches!(d, FocusDirection::Right | FocusDirection::Down);
             for j in 0..len {
                 let i = if forward { j } else { len - 1 - j };
-                let c = self[curr].children[i];
+                let c = curr.children(self)[i];
                 if matches!(c, Nidx::L(x) if x == *f) {
                     continue;
                 }
                 let cr = match c {
                     Nidx::L(x) => self[x].r,
                     Nidx::S(x) => self[x].r,
+                    Nidx::P(x) => self[x].r
                 };
                 let found = match d {
                     FocusDirection::Left => cr.x + cr.w <= r.x,
@@ -383,13 +523,14 @@ impl Nodes{
                     FocusDirection::Down => cr.y >= r.y + r.h,
                 };
                 if found {
-                    self[curr].focus = i as u16;
+                    *curr.mut_focus(self) = i as u16;
                     break 'search c;
                 }
             }
             match parent {
-                Some(p) => curr = p,
-                None => return,
+                Parent::S(x) => curr = x.into(),
+                Parent::P(x) => curr = x.into(),
+                Parent::R => return,
             }
         };
         let mut target = target;
@@ -404,6 +545,11 @@ impl Nodes{
                     let f = self[s].focus.min((children.len() as u16) - 1);
                     target = children[f as usize];
                 }
+                Nidx::P(x) => {
+                    let children = &self[x].children;
+                    let f = self[x].focus.min((children.len() as u16) - 1);
+                    target = children[f as usize];
+                }
             }
         }
     }
@@ -414,7 +560,7 @@ impl Nodes{
         &mut self,
         ws:&mut Widgets<C, E>,
         w:Box<dyn Widget<C, E>>,
-        p:Sidx,
+        p:Parent,
     ){
         Leaf::add(self, ws, p, w);
     }
@@ -432,7 +578,11 @@ impl Nodes{
     pub fn close<C, E>(&mut self, ws:&mut Widgets<C, E>, f:&mut Lidx)->Result<(), ()>{
         let last = {
             let p = self[*f].parent;
-            let Split {focus, children: c, ..} = &mut self[p];
+            let (focus, c) = match p{
+                Parent::R    => (&mut self.root.focus, &mut self.root.children),
+                Parent::S(x) => {let Split{children:c, focus:f, ..} = &mut self[x]; (f, c)}
+                Parent::P(x) => {let Plane {children:c, focus:f, ..} = &mut self[x]; (f, c)}
+            };
             let pos = c.iter().position(|x| *x == (*f).into()).unwrap();
             c.remove(pos);
             *focus = if *focus > pos as u16{
@@ -446,30 +596,57 @@ impl Nodes{
         let last = self.propegate_fit(ws, last);
         self.recalc(ws, last);
         return fix_focus(self, f, last);
-        fn prune(ns:&mut Nodes, p:Sidx)->Sidx{
-            let pp = match ns[p].parent{ Some(x) => x, _ => return p };
-            match ns[p].children.len(){
+        fn prune(ns:&mut Nodes, p:Parent)->Parent{
+            let Some(pp) = p.parent(ns) else {return p};
+            match p.children(ns).len(){
                 0 => {
-                    let Split { focus:f, children: c, ..} = &mut ns[pp];
-                    let pos = c.iter().position(|x| *x == p.into()).unwrap();
+                    let p = match p{
+                        Parent::S(x) => x.into(),
+                        Parent::P(x) => x.into(),
+                        Parent::R => unreachable!(),
+                    };
+                    let (f, c) = match pp{
+                        Parent::R =>    {let Root {children:c, focus:f, ..} = &mut ns.root; (f, c)}
+                        Parent::S(x) => {let Split{children:c, focus:f, ..} = &mut ns[x]; (f, c)}
+                        Parent::P(x) => {let Plane{children:c, focus:f, ..} = &mut ns[x]; (f, c)}
+                    };
+                    let pos = c.iter().position(|x| *x == p).unwrap();
                     c.remove(pos);
                     *f = if *f > pos as u16{
                         *f - 1
                     } else {
                         (*f).min((c.len().saturating_sub(1)) as u16)
                     };
-                    ns.s.remove(p);
+                    match p{
+                        Nidx::L(_) => unreachable!(),
+                        Nidx::S(x) => {ns.s.remove(x);},
+                        Nidx::P(x) => {ns.p.remove(x);},
+                    };
                     prune(ns, pp)
                 }
                 1 => {
-                    let c = ns[p].children[0];
+                    let c = match p{
+                        Parent::S(x) => &ns[x].children,
+                        Parent::P(x) => &ns[x].children,
+                        Parent::R => unreachable!()
+                    }[0];
                     match c{
                         Nidx::S(x) => ns[x].parent = pp.into(),
                         Nidx::L(x) => ns[x].parent = pp,
+                        Nidx::P(x) => ns[x].parent = pp,
                     }
-                    ns[pp].children.retain(|x| *x != p.into());
-                    ns.s.remove(p);
-                    ns[pp].children.push(c);
+                    let p = match p{
+                        Parent::S(x) => x.into(),
+                        Parent::P(x) => x.into(),
+                        Parent::R    => unreachable!(),
+                    };
+                    pp.mut_children(ns).retain(|x| *x != p);
+                    match p{
+                        Nidx::P(x) => {ns.p.remove(x);}
+                        Nidx::L(x) => {ns.l.remove(x);}
+                        Nidx::S(x) => {ns.s.remove(x);}
+                    }
+                    pp.mut_children(ns).push(c);
                     prune(ns, pp)
                 }
                 _ => {
@@ -477,13 +654,18 @@ impl Nodes{
                 }
             }
         }
-        fn fix_focus(ns:&mut Nodes, i:&mut Lidx, last:Sidx)->Result<(), ()>{
-            let mut last = last.into();
-            while let Nidx::S(x) = last{
-                last = *ns[x].children.get(ns[x].focus as usize).ok_or(())?
+        fn fix_focus(ns:&mut Nodes, i:&mut Lidx, last:Parent)->Result<(), ()>{
+
+            let mut last = last;
+            let mut leaf = None;
+            while matches!(last, Parent::R | Parent::S(_) | Parent::P(_)){
+                last = match last.children(ns).get(last.focus(ns) as usize).ok_or(())?{
+                    Nidx::S(x) => (*x).into(),
+                    Nidx::P(x) => (*x).into(),
+                    Nidx::L(x) => {leaf = x.into(); break}
+                }
             }
-            let Nidx::L(s) = last else {unreachable!()};
-            *i = s;
+            *i = *leaf.unwrap();
             Ok(())
         }
     }

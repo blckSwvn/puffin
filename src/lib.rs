@@ -3,18 +3,19 @@ mod storage;
 mod layout;
 mod builder;
 use std::io::{self, stdout};
+use std::time::Duration;
 pub use builder::*;
-
+use crossterm::style::Attributes;
 pub use layout::{Rect, Direction, leaf, Bounds, FocusDirection};
 use layout::*;
 use storage::*;
 use storage::{
     widgets::Widgets,
-    nodes::{Nodes, Sidx, Lidx, Nidx, FOCUS, ROOT}
+    nodes::{Nodes, Sidx, Lidx, Nidx, FOCUS}
 };
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
-    event::{Event, KeyEvent},
+    event::{Event, KeyEvent, MouseEvent},
     execute,
     terminal::{
         Clear,
@@ -24,19 +25,24 @@ use crossterm::{
         disable_raw_mode
     }
 };
+pub use crossterm::{
+    event::KeyCode,
+    style::Color,
+};
 pub use screen::ScreenBuffer;
 
-pub trait Widget<Ctx, E>{
+pub trait Widget<C, E>{
     fn draw(&mut self, r:Rect, screen:&mut ScreenBuffer, focused:bool);
     fn bounds(&self)->leaf::Bounds{
         leaf::Bounds::default()
     }
     fn behaviour(
         &mut self,
-        k: KeyEvent,
-        ctx: &mut Ctx,
+        event: InputEvent,
+        ctx: &mut C,
     ) -> Response<E>;
 }
+
 pub type Background = fn(Rect, &mut ScreenBuffer);
 pub struct Ui<C, E>{
     pub focus:Lidx,
@@ -80,9 +86,14 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering}
 };
+#[derive(Clone, Copy)]
+pub enum InputEvent{
+    Key(KeyEvent),
+    Mouse(MouseEvent),
+}
 impl<C, E> Ui<C, E>{
     pub fn run<F>(&mut self, ctx: &mut C, mut handler: F)->io::Result<()> where F:
-        FnMut(KeyEvent, Response<E>, &mut C, &mut Ui<C, E>){
+        FnMut(InputEvent, Response<E>, &mut C, &mut Ui<C, E>){
         fn guard()->io::Result<impl Drop>{
             let x = Arc::new(AtomicBool::new(false));
             fn install_panic_hook(restored:Arc<AtomicBool>){
@@ -130,18 +141,26 @@ impl<C, E> Ui<C, E>{
         let _guard = guard()?;
         self.draw()?;
         while !self.quit{
-            let event = crossterm::event::read()?;
-            match event{
-                Event::Resize(w, h) => {
-                    self.old = ScreenBuffer::new(w, h);
-                    self.curr = ScreenBuffer::new(w, h);
-                    self.nodes.resize(&self.widgets, w, h);
-                    }
-                Event::Key(x) => {
+            if crossterm::event::poll(Duration::from_millis(16))?{
+                let event = crossterm::event::read()?;
+                let mut handler = |x| {
                     let b = self.widgets[self.nodes[self.focus].w].behaviour(x, ctx);
                     handler(x, b, ctx, self)
+                };
+                match event{
+                    Event::Resize(w, h) => {
+                        self.old = ScreenBuffer::new(w, h);
+                        self.curr = ScreenBuffer::new(w, h);
+                        self.nodes.resize(&self.widgets, w, h);
+                    }
+                    Event::Mouse(x) => {
+                        handler(InputEvent::Mouse(x))
+                    }
+                    Event::Key(x) => {
+                        handler(InputEvent::Key(x))
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
             self.draw()?;
         }
@@ -154,9 +173,8 @@ impl<C, E> Ui<C, E>{
     }
 }
 
-use crossterm::style::Color;
 pub fn background_default(rect:Rect, screen:&mut ScreenBuffer){
-    rect.fill(" ".into(), Color::Black, Color::Black, screen);
+    rect.fill(" ".into(), Color::Black, Color::Black, Attributes::none(), screen);
 }
 pub fn new<C, E>(direction:Direction, build:impl FnOnce(Builder<'_, C, E, Empty>)->Builder<'_, C, E, NonEmpty>)->Ui<C, E>{
     let (w, h) = crossterm::terminal::size().unwrap();
@@ -170,7 +188,8 @@ pub fn new<C, E>(direction:Direction, build:impl FnOnce(Builder<'_, C, E, Empty>
         quit: false,
     };
     build(Builder::new(&mut puffin.nodes, &mut puffin.widgets));
-    puffin.nodes.recalc(&puffin.widgets, ROOT);
+    puffin.nodes.recalc(&puffin.widgets, Parent::R);
+    // puffin.nodes.recalc(&puffin.widgets, ROOT);
     puffin
 } 
 
@@ -180,7 +199,9 @@ pub fn sketch<Ctx, Cmd>(
     focus: Lidx,
     curr: &mut ScreenBuffer,
 ) {
-    inner(n, widgets, Nidx::S(ROOT), focus, curr);
+    for c in &n.root.children{
+        inner(n, widgets, *c, focus, curr);
+    }
     fn inner<Ctx, Cmd>(
         n: &Nodes,
         w: &mut Widgets<Ctx, Cmd>,
@@ -197,6 +218,13 @@ pub fn sketch<Ctx, Cmd>(
                 let s = &n[i];
                 (s.background)(s.r, screen);
                 for &child in &n[i].children {
+                    inner(n, w, child, focus, screen);
+                }
+            }
+            Nidx::P(i) => {
+                let s = &n[i];
+                ((s.background)(s.r, screen));
+                for &child in &n[i].children{
                     inner(n, w, child, focus, screen);
                 }
             }

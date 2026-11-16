@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 pub struct Builder<'a, C, E, T>{
     nodes: &'a mut Nodes,
     widgets: &'a mut Widgets<C, E>,
-    parent:Sidx,
+    parent:Parent,
     marker:PhantomData<fn()->T>,
 }
 
@@ -16,7 +16,11 @@ impl <'a, C, E, T> Builder<'a, C, E, T>{
         Builder{nodes:self.nodes, widgets:self.widgets, parent:self.parent, marker:PhantomData}
     }
     pub fn background(self, bg:Background)->Self{
-        self.nodes[self.parent].background = bg;
+        *match self.parent{
+            Parent::R => &mut self.nodes.root.background,
+            Parent::S(x) => &mut self.nodes[x].background,
+            Parent::P(x) => &mut self.nodes[x].background,
+        } = bg;
         self
     }
     pub fn vertical<B>(self, build:B)->Builder<'a, C, E, NonEmpty>
@@ -32,10 +36,14 @@ impl <'a, C, E, T> Builder<'a, C, E, T>{
 }
 impl<'a, C, E> Builder<'a, C, E, Empty>{
     pub fn bounds(self, bounds:Bounds){
-        self.nodes[self.parent].b = bounds;
+        match self.parent{
+            Parent::R => {}
+            Parent::S(x) => self.nodes[x].b = bounds,
+            Parent::P(x) => self.nodes[x].b = bounds,
+        }
     }
     pub fn new(nodes:&'a mut Nodes, widgets:&'a mut Widgets<C, E>)->Builder<'a, C, E, Empty>{
-        Builder{ nodes, widgets, parent: ROOT, marker:PhantomData}
+        Builder{ nodes, widgets, parent: Parent::R, marker:PhantomData}
     }
 }
 
@@ -46,13 +54,13 @@ impl<'a, C, E> Builder<'a, C, E, NonEmpty>{
     }
 }
 
-fn add<C, E>(ns:&mut Nodes, ws:&mut Widgets<C, E>, p:Sidx, w:impl Widget<C, E> + 'static)->Lidx{
+fn add<C, E>(ns:&mut Nodes, ws:&mut Widgets<C, E>, p:Parent, w:impl Widget<C, E> + 'static)->Lidx{
     let w = ws.insert(Box::new(w));
     let i = ns.l.insert(Leaf{parent:p, w, r:Rect::ZERO });
-    ns[p].children.push(i.into());
+    p.mut_children(ns).push(i.into());
     i
 }
-fn add_empty(ns:&mut Nodes, direction:Direction, p:Sidx, background:Background, b:Bounds)->Sidx{
+fn add_empty(ns:&mut Nodes, direction:Direction, p:Parent, background:Background, b:Bounds)->Parent{
     let i = ns.s.insert(Split{
         parent:p.into(),
         focus:0,
@@ -62,6 +70,6 @@ fn add_empty(ns:&mut Nodes, direction:Direction, p:Sidx, background:Background, 
         background,
         r:Rect::ZERO,
     });
-    ns[p].children.push(i.into());
-    i
+    p.mut_children(ns).push(i.into());
+    i.into()
 }

@@ -2,7 +2,9 @@ use super::Rect;
 use crossterm::{
     cursor::MoveTo,
     queue,
-    style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
+    style::{
+        Attribute, Attributes, Color, Print, ResetColor, SetAttribute, SetAttributes, SetBackgroundColor, SetForegroundColor
+    },
 };
 use std::io::stdout;
 pub const FG: Color = Color::White;
@@ -16,10 +18,11 @@ pub enum ContKind{
 #[derive(Clone, PartialEq, Eq)]
 struct Cell {
     c: ContKind,
-    s: Style,
+    s: Colors,
+    a: Attributes
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct Style{
+struct Colors{
     fg:Color,
     bg:Color,
 }
@@ -27,21 +30,24 @@ impl Default for Cell {
     fn default() -> Self {
         Self {
             c: ContKind::Empty,
-            s: Style { fg: FG, bg: BG },
+            s: Colors { fg: FG, bg: BG },
+            a: Attributes::none()
         }
     }
 }
 impl Cell{
-    fn grapheme(s:&str, fg:Color, bg:Color)->Self{
+    fn grapheme(s:&str, fg:Color, bg:Color, a:Attributes)->Self{
         Self{
             c:ContKind::Grapheme(s.into()),
-            s:Style { fg, bg },
+            s:Colors { fg, bg },
+            a,
         }
     }
     fn continuation(fg:Color, bg:Color)->Self{
         Self{
             c:ContKind::Continue,
-            s:Style { fg, bg },
+            s:Colors { fg, bg },
+            a:Attributes::none()
         }
     }
 }
@@ -68,6 +74,7 @@ impl ScreenBuffer {
         s: &str,
         fg: Color,
         bg: Color,
+        a: Attributes,
     ) {
         if r.w == 0 || r.h == 0 { return; }
         if y < r.y || y >= r.bottom() || y >= self.h { return; }
@@ -87,7 +94,7 @@ impl ScreenBuffer {
                 self.clear_grapheme(col, y);
             }
             let idx = y as usize * self.w as usize + cx as usize;
-            self.cells[idx] = Cell::grapheme(grapheme, fg, bg);
+            self.cells[idx] = Cell::grapheme(grapheme, fg, bg, a);
             for offset in 1..width {
                 let idx = y as usize * self.w as usize + cx as usize + offset;
                 self.cells[idx] = Cell::continuation(fg, bg);
@@ -119,7 +126,7 @@ impl ScreenBuffer {
     pub fn draw(&mut self, old: &mut ScreenBuffer) -> std::io::Result<()> {
         use std::io::Write;
         let mut out = stdout().lock();
-        let (mut curr_fg, mut curr_bg) = (None, None);
+        let (mut curr_fg, mut curr_bg, mut curr_attr) = (None, None, None);
         for y in 0..self.h {
             let mut x = 0;
             while x < self.w {
@@ -143,6 +150,15 @@ impl ScreenBuffer {
                     queue!(out, SetBackgroundColor(new.s.bg))?;
                     curr_bg = Some(new.s.bg);
                 }
+                if curr_attr != Some(new.a) {
+                    queue!(out, SetAttribute(Attribute::Reset))?;
+                    curr_fg = None;
+                    curr_bg = None;
+                    if !new.a.is_empty() {
+                        queue!(out, SetAttributes(new.a))?;
+                    }
+                    curr_attr = Some(new.a);
+                }
                 match &new.c {
                     ContKind::Grapheme(s) => {
                         queue!(out, Print(s))?;
@@ -156,7 +172,7 @@ impl ScreenBuffer {
                 }
             }
         }
-        queue!(out, ResetColor)?;
+        queue!(out, ResetColor, SetAttribute(Attribute::Reset))?;
         out.flush()?;
         std::mem::swap(&mut self.cells, &mut old.cells);
         self.clear_buffer();

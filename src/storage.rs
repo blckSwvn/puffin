@@ -183,24 +183,40 @@ pub mod widgets{
 pub mod nodes{
     use super::fvec::*;
     use super::widgets::*;
-    pub const FOCUS: Lidx = Idx::new(0);
-    pub const ROOT: Sidx = Idx::new(0);
-    use crate::layout::{
-        Leaf as L, Split as S,
+    use crate::layout::Root;
+use crate::layout::{
+        Leaf as L, Split as S, Plane as P,
+        Parent,
         Rect,
-        Bounds, Bound,
+        Bounds,
         Direction,
     };
+    pub const FOCUS: Idx<L> = fvec::Idx::new(0);
     use crate::Widget as W;
     use crate::Background;
+use crate::storage::fvec;
 
     pub struct Nodes{
-        pub l:Fvec<L>,
+        pub root:Root,
         pub s:Fvec<S>,
+        pub p:Fvec<P>,
+        pub l:Fvec<L>,
     }
     pub type Sidx = Idx<S>;
     pub type Lidx = Idx<L>;
+    pub type Pidx = Idx<P>;
     use std::ops::{Index, IndexMut};
+    impl Index<Pidx> for Nodes{
+        type Output = P;
+        fn index(&self, i:Pidx)->&P{
+            &self.p[i]
+        }
+    }
+    impl IndexMut<Pidx> for Nodes{
+        fn index_mut(&mut self, i:Pidx)->&mut P{
+            &mut self.p[i]
+        }
+    }
     impl Index<Sidx> for Nodes{
         type Output = S;
         fn index(&self, i:Sidx)->&S{
@@ -228,6 +244,7 @@ pub mod nodes{
     pub enum Nidx{
         S(Sidx),
         L(Lidx),
+        P(Pidx),
     }
     impl From<Sidx> for Nidx{
         fn from(s: Sidx) -> Self {
@@ -239,53 +256,53 @@ pub mod nodes{
             Self::L(value)
         }
     }
+    impl From<Pidx> for Nidx{
+        fn from(value: Pidx) -> Self {
+            Self::P(value)
+        }
+    }
 
     impl Nidx{
         pub fn r(self, n:&Nodes)->Rect{
             match self{
-                Self::S(s)=>n[s].r,
-                Self::L(l)=>n[l].r,
+                Self::S(x)=>n[x].r,
+                Self::L(x)=>n[x].r,
+                Self::P(x)=>n[x].r,
             }
         }
         pub fn r_mut(self, n:&mut Nodes)->&mut Rect{
             match self{
-                Self::S(s)=>&mut n[s].r,
-                Self::L(l)=>&mut n[l].r,
+                Self::S(x)=>&mut n[x].r,
+                Self::L(x)=>&mut n[x].r,
+                Self::P(x)=>&mut n[x].r,
             }
         }
         pub fn bounds<C, E>(self, n:&Nodes, ws:&Widgets<C, E>)->Bounds{
             match self{
-                Self::S(s)=>n[s].b,
-                Self::L(i)=>ws[n[i].w].bounds().into(),
+                Self::S(x)=>n[x].b,
+                Self::P(x)=>n[x].b,
+                Self::L(x)=>ws[n[x].w].bounds().into(),
             }
         }
     }
     impl Nodes{
         pub fn is_empty(&self) -> bool {
-            self.s[ROOT].children.is_empty()
+            self.root.children.is_empty()
         }
-
-        pub fn new<C, E>(w:u16, h:u16, widgets:&mut Widgets<C, E>, direction:Direction, background: Background)->Self{
-            let (l, mut s) = (Fvec::new(), Fvec::new());
-            s.insert(S{parent:None, r:Rect{x:0, y:0, w, h}, direction, children:vec![], focus:0, background, 
-                b:Bounds{
-                    min_w:Bound::Absolute(w),
-                    max_w:Bound::Absolute(w),
-                    min_h:Bound::Absolute(h),
-                    max_h:Bound::Absolute(h),
-                }
-            });
-            let mut s = Self { l, s };
-            s.recalc(widgets, ROOT);
-            s
+        pub fn new<C, E>(w:u16, h:u16, _:&mut Widgets<C, E>, direction:Direction, background: Background)->Self{
+            let (l, s, p) = (Fvec::new(), Fvec::new(), Fvec::new());
+            Self{
+                root:Root{children:vec![], direction, background, focus:0, w, h},
+                l, s, p
+            }
         }
     }
 
     impl L{
-        pub fn add<C, E>(n: &mut Nodes, ws:&mut Widgets<C, E>, parent:Sidx, w:Box<dyn W<C, E>>)->Lidx{
+        pub fn add<C, E>(n: &mut Nodes, ws:&mut Widgets<C, E>, parent:Parent, w:Box<dyn W<C, E>>)->Lidx{
             let w = ws.insert(w);
             let lidx = n.l.insert(Self{parent, r:Rect::ZERO, w});
-            n[parent].children.push(lidx.into());
+            parent.mut_children(n).push(lidx.into());
             n.recalc(ws, n[lidx].parent);
             lidx
         }
@@ -299,13 +316,13 @@ pub mod nodes{
             split_b:Bounds,
         )->(Lidx, Sidx){
             let p = n[f].parent;
-            let i = n[p].children.iter()
+            let i = p.children(n).iter()
                 .position(|c| *c == f.into())
                 .unwrap();
-            let l = match n[p].children[i] {Nidx::L(l) =>l, _ => unreachable!()};
+            let l = match p.children(n)[i] {Nidx::L(l) =>l, _ => unreachable!()};
             let (new_l, s) = S::add(n, ws, d, p, w, background, split_b);
-            n[l].parent = s;
-            n[p].children.swap_remove(i);
+            n[l].parent = s.into();
+            p.mut_children(n).swap_remove(i);
             n[s].children.insert(0, l.into());
             n.recalc(ws, p);
             (new_l, s)
@@ -316,15 +333,15 @@ pub mod nodes{
             ns:&mut Nodes,
             ws:&mut Widgets<C, E>,
             direction:Direction,
-            p:Sidx,
+            p:Parent,
             w:Box<dyn W<C, E>>,
             background:Background,
             b:Bounds,
         )->(Lidx, Sidx){
             let s = ns.s.insert(S{parent:p.into(), focus:0, direction, r:Rect::ZERO, children:vec![], b, background});
-            ns[p].children.push(s.into());
+            p.mut_children(ns).push(s.into());
             let w = ws.insert(w);
-            let lidx = ns.l.insert(L{parent:s, r:Rect::ZERO, w});
+            let lidx = ns.l.insert(L{parent:s.into(), r:Rect::ZERO, w});
             ns[s].children.push(lidx.into());
             ns.recalc(ws, p);
             (lidx, s)
