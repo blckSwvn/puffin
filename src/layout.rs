@@ -159,16 +159,15 @@ impl Root{
 pub struct Split {
     pub parent: Parent,
     pub children: Vec<Nidx>, //children cannot be left empty hard invariant
-    pub direction: Direction,
     pub r: Rect,
     pub b: Bounds,
     pub background: Background,
     pub focus: u16,
+    pub direction: Direction,
 }
 pub struct Plane{
     pub parent: Parent,
     pub children: Vec<Nidx>,
-    pub direction: Direction,
     pub r:Rect,
     pub b:Bounds,
     pub background:Background,
@@ -176,6 +175,7 @@ pub struct Plane{
     pub anchor:Anchors,
     pub focus: u16,
     pub z:u16,
+    pub direction: Direction,
 }
 pub struct Alignments{
     pub x:Alignment,
@@ -191,8 +191,10 @@ pub enum Alignment{
     End,
 }
 pub enum Anchor{
+    Absolute(u16),
     Offset(u16),
-    Relative(f32),
+    Relative2Parent(f32),
+    Relative2Screen(f32),
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -404,17 +406,14 @@ fn distrobute<C, E>(&mut self, ws: &Widgets<C, E>, i: Parent) {
             ( std::mem::take(children), *direction, Root::r(self), Root::b(self),)
         }
     };
-
     let mut left = match direction {
         Direction::Vertical => parent_r.h,
         Direction::Horizontal => parent_r.w,
     };
-
     // Size normal children using their minimum bounds.
     for child in children.iter().filter(|c| !matches!(c, Nidx::P(_))) {
         let b = child.bounds(self, ws);
         let r = child.r_mut(self);
-
         match direction {
             Direction::Vertical => {
                 let size = b.min_h(*r, parent_r, parent_b);
@@ -434,30 +433,25 @@ fn distrobute<C, E>(&mut self, ws: &Widgets<C, E>, i: Parent) {
             }
         }
     }
-
     // Planes do not consume space in the parent's layout.
     // Their fit dimensions have already been calculated by propegate_fit.
     for child in children.iter().filter(|c| matches!(c, Nidx::P(_))) {
         let b = child.bounds(self, ws);
         let r = child.r_mut(self);
-
         let min_w = b.min_w(*r, parent_r, parent_b);
         let max_w = b.max_w(*r, parent_r, parent_b);
         let min_h = b.min_h(*r, parent_r, parent_b);
         let max_h = b.max_h(*r, parent_r, parent_b);
-
         r.w = if matches!(b.min_w, Bound::Fit) || matches!(b.max_w, Bound::Fit) {
             r.w.max(min_w).min(max_w)
         } else {
             max_w
         };
-
         r.h = if matches!(b.min_h, Bound::Fit) || matches!(b.max_h, Bound::Fit) {
             r.h.max(min_h).min(max_h)
         } else {
             max_h
         };
-
         // A plane cannot extend beyond its parent's dimensions.
         r.w = r.w.min(parent_r.w);
         r.h = r.h.min(parent_r.h);
@@ -472,23 +466,18 @@ fn distrobute<C, E>(&mut self, ws: &Widgets<C, E>, i: Parent) {
 
     while left > 0 && !resize.is_empty() {
         let len = resize.iter().filter(|c| c.is_some()).count() as u16;
-
         if len == 0 {
             break;
         }
-
         let per = left / len;
         let mut rem = left % len;
         let mut used = 0;
-
         for child in resize.iter_mut() {
             let Some(child) = child else {
                 continue;
             };
-
             let b = child.bounds(self, ws);
             let r = child.r_mut(self);
-
             let (size, max) = match direction {
                 Direction::Horizontal => (
                     r.w,
@@ -499,7 +488,6 @@ fn distrobute<C, E>(&mut self, ws: &Widgets<C, E>, i: Parent) {
                     b.max_h(*r, parent_r, parent_b),
                 ),
             };
-
             let add = (per + if rem > 0 {
                 rem -= 1;
                 1
@@ -507,28 +495,18 @@ fn distrobute<C, E>(&mut self, ws: &Widgets<C, E>, i: Parent) {
                 0
             })
             .min(max.saturating_sub(size));
-
             match direction {
                 Direction::Vertical => r.h += add,
                 Direction::Horizontal => r.w += add,
             }
-
             used += add;
-
-            // if size + add >= max {
-            //     // *child = None;
-            // }
         }
-
         left = left.saturating_sub(used);
 
         if used == 0 {
             break;
         }
     }
-
-    // Recurse into both splits and planes.
-    // Plane children must be distributed using the plane's newly calculated rect.
     for child in children.iter() {
         match child {
             Nidx::S(x) => self.distrobute(ws, Parent::S(*x)),
@@ -536,95 +514,12 @@ fn distrobute<C, E>(&mut self, ws: &Widgets<C, E>, i: Parent) {
             Nidx::L(_) => {}
         }
     }
-
-    // Restore this container's children.
     match i {
         Parent::P(x) => self[x].children = children,
         Parent::S(x) => self[x].children = children,
         Parent::R => self.root.children = children,
     }
 }
-    // fn distrobute<C, E>(&mut self, ws:&Widgets<C, E>, i:Parent){
-    //     let (children, d, parent_r, parent_b) = match i{
-    //         Parent::S(i) => { 
-    //             let Split{children:c, direction:d, r, b, ..} = &mut self[i];
-    //             (std::mem::take(c), *d, *r, *b)
-    //         },
-    //         Parent::P(i) => {
-    //             let Plane{ children:c, direction:d, r, b, ..} = &mut self[i];
-    //             (std::mem::take(c), *d, *r, *b)
-    //         },
-    //         Parent::R => { 
-    //             let Root {children:c, direction:d, ..} = &mut self.root;
-    //             (std::mem::take(c), *d, Root::r(self), Root::b(self))},
-    //     };
-    //     let mut left = match d{
-    //         Direction::Vertical => parent_r.h,
-    //         Direction::Horizontal => parent_r.w,
-    //     };
-    //     for c in children.iter(){
-    //         let b = c.bounds(self, ws);
-    //         let r = c.r_mut(self);
-    //         match d{
-    //             Direction::Vertical => {
-    //                 left -= {let x = b.min_h(*r, parent_r, parent_b); r.h = x; x};
-    //                 let max = b.max_w(*r, parent_r, parent_b);
-    //                 r.w = max.min(parent_r.w);
-    //             }
-    //             Direction::Horizontal => {
-    //                 left -= {let x = b.min_w(*r, parent_r, parent_b); r.w = x; x};
-    //                 let max = b.max_h(*r, parent_r, parent_b);
-    //                 c.r_mut(self).h = max.min(parent_r.h);
-    //             }
-    //         }
-    //     }
-    //     for c in children.iter().filter(|x| matches!(x, Nidx::P(_))){
-    //         let b = c.bounds(self, ws);
-    //         let r = c.r_mut(self);
-    //         r.h = b.max_h(*r, parent_r, parent_b).min(parent_r.h);
-    //         r.w = b.max_w(*r, parent_r, parent_b).min(parent_r.w);
-    //     }
-    //     let mut resize: Vec<_> = children.iter().filter(|x| !matches!(x, Nidx::P(_))).map(|x| Some(*x)).collect();
-    //     while left > 0 && !resize.is_empty(){
-    //         let len = resize.iter().filter(|x| x.is_some()).count() as u16;
-    //         if len == 0{break};
-    //         let per = left / len;
-    //         let mut rem = left % len;
-    //         let mut used = 0;
-    //         for child in resize.iter_mut(){
-    //             let Some(c) = child else {continue};
-    //             let b = c.bounds(self, ws);
-    //             let c = c.r_mut(self);
-    //             let (size, max) = match d{
-    //                 Direction::Horizontal => (c.w, b.max_w(*c, parent_r, parent_b)),
-    //                 Direction::Vertical   => (c.h, b.max_h(*c, parent_r, parent_b)),
-    //             };
-    //             let add = 
-    //                 (per + if rem > 0{rem -= 1; 1}else{0})
-    //                 .min(max.saturating_sub(size));
-    //             match d{
-    //                 Direction::Vertical   => c.h += add,
-    //                 Direction::Horizontal => c.w += add,
-    //                 }
-    //             used += add;
-    //             if size + add >= max{
-    //                 *child = None;
-    //             }
-    //         }
-    //         left = left.saturating_sub(used);
-    //         if used == 0 {break}
-    //     }
-    //     for c in children.iter(){
-    //         if let Nidx::S(c) = c{
-    //             self.distrobute(ws, Parent::S(*c));
-    //         }
-    //     }
-    //     match i{
-    //         Parent::P(i) => self[i].children = children,
-    //         Parent::S(i) => self[i].children = children,
-    //         Parent::R    => self.root.children = children,
-    //     }
-    // }
 fn recalc_pos(&mut self, i: Parent) {
     let (c, d, parent_r) = match i {
         Parent::S(i) => {
@@ -633,7 +528,7 @@ fn recalc_pos(&mut self, i: Parent) {
         }
         Parent::R => {
             let r = Root::r(self);
-            let Root { children: c, direction: d, .. } = &mut self.root;
+            let Root{ children: c, direction: d, .. } = &mut self.root;
             (std::mem::take(c), *d, r)
         }
         Parent::P(i) => {
@@ -641,60 +536,54 @@ fn recalc_pos(&mut self, i: Parent) {
             (std::mem::take(c), *d, *r)
         }
     };
-
     // Use a separate cursor for normal children.
     // Do not mutate parent_r: plane anchors are relative to the
     // original parent rectangle, not the remaining layout space.
     let mut cursor = parent_r;
-
     for child in c.iter().filter(|x| !matches!(x, Nidx::P(_))) {
         let child_r = child.r(self);
-
         {
             let r = child.r_mut(self);
             r.x = cursor.x;
             r.y = cursor.y;
         }
-
         match d {
             Direction::Horizontal => cursor.x += child_r.w,
             Direction::Vertical => cursor.y += child_r.h,
         }
     }
-
     // Position planes relative to the original parent rectangle.
     for child in c.iter() {
         let Nidx::P(child) = child else { continue };
-
+        let  root_r = Root::r(self);
         let Plane { r: curr_r, align, anchor, .. } = &mut self[*child];
-
-        let x = match anchor.x {
-            Anchor::Offset(x) => x,
-            Anchor::Relative(x) => (x * parent_r.w as f32) as u16,
-        } + parent_r.x;
-
-        let x = x.min(parent_r.x + parent_r.w);
-
-        let y = match anchor.y {
-            Anchor::Offset(y) => y,
-            Anchor::Relative(y) => (y * parent_r.h as f32) as u16,
-        } + parent_r.y;
-
-        let y = y.min(parent_r.y + parent_r.h);
-
+        let (x, r) = match anchor.x{
+            Anchor::Offset(x) => (x, parent_r),
+            Anchor::Relative2Screen(x) => ((x * parent_r.w as f32) as u16, parent_r),
+            Anchor::Absolute(x) => (x, root_r),
+            Anchor::Relative2Parent(x) => ((x * root_r.w as f32) as u16, root_r)
+        };
+        let x = x + r.x;
+        let x = x.min(r.x + r.w);
+        let (y, r) = match anchor.y{
+            Anchor::Offset(y) => (y, parent_r),
+            Anchor::Relative2Parent(y) => ((y * parent_r.h as f32) as u16, parent_r),
+            Anchor::Absolute(y) => (y, root_r),
+            Anchor::Relative2Screen(y) => ((y * root_r.w as f32) as u16, root_r)
+        };
+        let y = y + y+r.y;
+        let y = y.min(r.y + r.h);
         match align.x {
             Alignment::Start => curr_r.x = x,
             Alignment::Center => curr_r.x = x.saturating_sub(curr_r.w / 2),
             Alignment::End => curr_r.x = x.saturating_sub(curr_r.w),
         }
-
         match align.y {
             Alignment::Start => curr_r.y = y,
             Alignment::Center => curr_r.y = y.saturating_sub(curr_r.h / 2),
             Alignment::End => curr_r.y = y.saturating_sub(curr_r.h),
         }
     }
-
     for child in c.iter() {
         match *child {
             Nidx::S(child) => self.recalc_pos(child.into()),
@@ -702,7 +591,6 @@ fn recalc_pos(&mut self, i: Parent) {
             Nidx::L(_) => {}
         }
     }
-
     *i.mut_children(self) = c;
 }
     pub fn recalc<C, E>(&mut self, ws:&Widgets<C, E>, i: Parent) {
