@@ -6,7 +6,7 @@ use std::io::{self, stdout};
 use std::time::Duration;
 pub use builder::*;
 use crossterm::style::Attributes;
-pub use layout::{Rect, Direction, leaf, Bounds, FocusDirection};
+pub use layout::{Rect, Direction, leaf, Bounds, Bound, Alignment, Alignments, Anchor, Anchors, FocusDirection};
 use layout::*;
 use storage::*;
 use storage::{
@@ -198,22 +198,13 @@ pub fn sketch<Ctx, Cmd>(
     focus: Lidx,
     curr: &mut ScreenBuffer,
 ) {
-    let mut planes = Vec::new();
-
-    for &c in &n.root.children {
-        collect(n, widgets, c, focus, curr, &mut planes);
-    }
-    planes.sort_unstable_by_key(|&(z, _)| z);
-    for (_, idx) in planes {
-        draw_plane(n, widgets, idx, focus, curr);
-    }
-    fn collect<Ctx, Cmd>(
+    fn draw_content<Ctx, Cmd>(
         n: &Nodes,
         w: &mut Widgets<Ctx, Cmd>,
         idx: Nidx,
         focus: Lidx,
         screen: &mut ScreenBuffer,
-        planes: &mut Vec<(u16, Pidx)>,
+        planes: &mut Vec<Pidx>,
     ) {
         match idx {
             Nidx::L(i) => {
@@ -225,66 +216,38 @@ pub fn sketch<Ctx, Cmd>(
                 (s.background)(s.r, screen);
 
                 for &child in &s.children {
-                    collect(n, w, child, focus, screen, planes);
+                    draw_content(n, w, child, focus, screen, planes);
                 }
             }
             Nidx::P(i) => {
-                let p = &n[i];
-                planes.push((p.z, i));
-
-                for &child in &p.children {
-                    collect(n, w, child, focus, screen, planes);
-                }
+                planes.push(i);
             }
         }
     }
 
-    fn draw_plane<Ctx, Cmd>(
+    fn draw_layer<Ctx, Cmd>(
         n: &Nodes,
         w: &mut Widgets<Ctx, Cmd>,
-        idx: Pidx,
+        mut planes: Vec<Pidx>,
         focus: Lidx,
         screen: &mut ScreenBuffer,
     ) {
-        let p = &n[idx];
-        (p.background)(p.r, screen);
+        planes.sort_unstable_by_key(|&i| n[i].z);
 
-        for &child in &p.children {
-            match child {
-                Nidx::L(i) => {
-                    let l = &n[i];
-                    w[l.w].draw(l.r, screen, i == focus);
-                }
-                Nidx::S(i) => {
-                    // Draw the split subtree normally.
-                    draw_split(n, w, i, focus, screen);
-                }
-                Nidx::P(_) => {
-                    // Nested planes are drawn separately by the sorted pass.
-                }
+        for i in planes {
+            let p = &n[i];
+            (p.background)(p.r, screen);
+            let mut nested = Vec::new();
+            for &child in &p.children {
+                draw_content(n, w, child, focus, screen, &mut nested);
             }
+            draw_layer(n, w, nested, focus, screen);
         }
     }
-
-    fn draw_split<Ctx, Cmd>(
-        n: &Nodes,
-        w: &mut Widgets<Ctx, Cmd>,
-        idx: Sidx,
-        focus: Lidx,
-        screen: &mut ScreenBuffer,
-    ) {
-        let s = &n[idx];
-        (s.background)(s.r, screen);
-
-        for &child in &s.children {
-            match child {
-                Nidx::L(i) => {
-                    let l = &n[i];
-                    w[l.w].draw(l.r, screen, i == focus);
-                }
-                Nidx::S(i) => draw_split(n, w, i, focus, screen),
-                Nidx::P(_) => {}
-            }
-        }
+    (n.root.background)(Root::r(n), curr);
+    let mut planes = Vec::new();
+    for &child in &n.root.children {
+        draw_content(n, widgets, child, focus, curr, &mut planes);
     }
+    draw_layer(n, widgets, planes, focus, curr);
 }

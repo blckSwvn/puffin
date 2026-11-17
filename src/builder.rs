@@ -33,14 +33,39 @@ impl <'a, C, E, T> Builder<'a, C, E, T>{
             let parent = add_empty(self.nodes, Direction::Horizontal, self.parent, background_default, Bounds::default());
             build(Builder{nodes: self.nodes, widgets: self.widgets, parent, marker:PhantomData}).finish()
     }
+    pub fn plane<B>(
+        self,
+        align: Alignments,
+        anchor: Anchors,
+        z: u16,
+        build: B,
+    ) -> Builder<'a, C, E, NonEmpty>
+    where
+        B: FnOnce(Builder<'a, C, E, Empty>) -> Builder<'a, C, E, NonEmpty>,
+    {
+        let parent = add_plane(
+            self.nodes,
+            self.parent,
+            align,
+            anchor,
+            z,
+        );
+        build(Builder {
+            nodes: self.nodes,
+            widgets: self.widgets,
+            parent,
+            marker: PhantomData,
+        }).finish()
+    }
 }
 impl<'a, C, E> Builder<'a, C, E, Empty>{
-    pub fn bounds(self, bounds:Bounds){
+    pub fn bounds(self, bounds:Bounds)->Self{
         match self.parent{
             Parent::R => {}
             Parent::S(x) => self.nodes[x].b = bounds,
             Parent::P(x) => self.nodes[x].b = bounds,
         }
+        self
     }
     pub fn new(nodes:&'a mut Nodes, widgets:&'a mut Widgets<C, E>)->Builder<'a, C, E, Empty>{
         Builder{ nodes, widgets, parent: Parent::R, marker:PhantomData}
@@ -71,5 +96,30 @@ fn add_empty(ns:&mut Nodes, direction:Direction, p:Parent, background:Background
         r:Rect::ZERO,
     });
     p.mut_children(ns).push(i.into());
+    i.into()
+}
+
+fn add_plane(
+    ns: &mut Nodes,
+    p: Parent,
+    align: Alignments,
+    anchor: Anchors,
+    z: u16,
+) -> Parent {
+    let i = ns.p.insert(Plane {
+        parent: p,
+        children: vec![],
+        direction: Direction::Vertical,
+        r: Rect::ZERO,
+        b: Bounds::default(),
+        background: background_default,
+        align,
+        anchor,
+        focus: 0,
+        z,
+    });
+
+    p.mut_children(ns).push(i.into());
+
     i.into()
 }
