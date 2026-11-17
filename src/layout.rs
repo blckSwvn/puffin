@@ -378,13 +378,16 @@ impl Nodes{
             if let Bound::Fit = b.max_h{
                r.h = h;
             }
-            match i{
-                Parent::S(x) => self[x].children = c,
-                Parent::P(x) => self[x].children = c,
-                Parent::R => unreachable!()
+            if let Bound::Fit = b.min_h{
+                r.h = h;
             }
+            let p = match i{
+                Parent::S(x) => {self[x].children = c; self[x].parent},
+                Parent::P(x) => {self[x].children = c; self[x].parent},
+                Parent::R => unreachable!()
+            };
             if propegate_further{
-                self.propegate_fit(ws, i)
+                self.propegate_fit(ws, p)
             }else{
                 i
             }
