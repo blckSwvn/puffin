@@ -4,7 +4,7 @@ use crate::{Background, ScreenBuffer, Widget, nodes::Nodes, storage::nodes::{Lid
 
 pub mod leaf{
     use super::{Rect, Parent};
-    use crate::storage::{nodes::Sidx, widgets::Widx};
+    use crate::storage::{widgets::Widx};
     #[derive(Clone, Copy, PartialEq)]
     //subset of split bounds since leaves cant have children therefore shouldnt be able to have
     //fit sizing
@@ -149,7 +149,7 @@ impl Root{
             max_w: Bound::Absolute(w),
             min_w: Bound::Absolute(w),
             max_h: Bound::Absolute(h),
-            min_h:Bound::Absolute(h) 
+            min_h: Bound::Absolute(h) 
         }
     }
     const fn r(ns:&Nodes)->Rect{
@@ -175,7 +175,7 @@ pub struct Plane{
     align:Alignments,
     anchor:Anchors,
     pub focus: u16,
-    z:u16,
+    pub z:u16,
 }
 pub struct Alignments{
     x:Alignment,
@@ -191,9 +191,8 @@ pub enum Alignment{
     End,
 }
 pub enum Anchor{
-    Absolute(u16),
-    ScreenRelative(f32),
-    ParentRelative(f32),
+    Offset(u16),
+    Relative(f32),
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -304,11 +303,11 @@ impl Nodes{
     pub fn propegate_fit<C, E>(&mut self, ws:&Widgets<C, E>, i:Parent)->Parent{
         let (c, d, propegate_further) = match i{
                 Parent::S(x) => {let Split{direction:d,  children:c, ..} = &mut self[x]; (std::mem::take(c), *d, true)},
-                Parent::P(x) => {let Plane {direction:d, children:c, ..} = &mut self[x]; (std::mem::take(c), *d, false)},
+                Parent::P(x) => {let Plane{direction:d, children:c, ..}  = &mut self[x]; (std::mem::take(c), *d, false)},
                 Parent::R    => return i
             };
         let (mut w, mut h) = (0, 0);
-        for c in c.iter() {
+        for c in c.iter().filter(|x| !matches!(x, Nidx::P(_))) {
             let b = c.bounds(self, ws);
             let c = c.r(self);
             match d{
@@ -339,7 +338,7 @@ impl Nodes{
             }
         }
         let (prev_w, prev_h) = (w, h);
-        for c in c.iter(){
+        for c in c.iter().filter(|x| !matches!(x, Nidx::P(_))){
             let b = c.bounds(self, ws);
             let r = c.r_mut(self);
             match d{
@@ -392,13 +391,17 @@ impl Nodes{
     }
     fn distrobute<C, E>(&mut self, ws:&Widgets<C, E>, i:Parent){
         let (children, d, parent_r, parent_b) = match i{
-            Parent::S(i) => {let Split{children:c, direction:d, r, b, ..} = &mut self[i]; (std::mem::take(c), *d, *r, *b)},
-            Parent::P(i) => {let Plane{children:c, direction:d, r, b, ..} = &mut self[i]; (std::mem::take(c), *d, *r, *b)},
-            Parent::R => {
-                let b = Root::b(self);
-                let r = Root::r(self);
-                let Root {children:c, direction:d, w, h, ..} = &mut self.root;
-                (std::mem::take(c), *d, r, b)},
+            Parent::S(i) => { 
+                let Split{children:c, direction:d, r, b, ..} = &mut self[i];
+                (std::mem::take(c), *d, *r, *b)
+            },
+            Parent::P(i) => {
+                let Plane{ children:c, direction:d, r, b, ..} = &mut self[i];
+                (std::mem::take(c), *d, *r, *b)
+            },
+            Parent::R => { 
+                let Root {children:c, direction:d, ..} = &mut self.root;
+                (std::mem::take(c), *d, Root::r(self), Root::b(self))},
         };
         let mut left = match d{
             Direction::Vertical => parent_r.h,
@@ -420,7 +423,13 @@ impl Nodes{
                 }
             }
         }
-        let mut resize: Vec<_> = children.iter().map(|x| Some(*x)).collect();
+        for c in children.iter().filter(|x| matches!(x, Nidx::P(_))){
+            let b = c.bounds(self, ws);
+            let r = c.r_mut(self);
+            r.h = b.max_h(*r, parent_r, parent_b).min(parent_r.h);
+            r.w = b.max_w(*r, parent_r, parent_b).min(parent_r.w);
+        }
+        let mut resize: Vec<_> = children.iter().filter(|x| !matches!(x, Nidx::P(_))).map(|x| Some(*x)).collect();
         while left > 0 && !resize.is_empty(){
             let len = resize.iter().filter(|x| x.is_some()).count() as u16;
             if len == 0{break};
@@ -458,7 +467,7 @@ impl Nodes{
         match i{
             Parent::P(i) => self[i].children = children,
             Parent::S(i) => self[i].children = children,
-            Parent::R => unreachable!()
+            Parent::R    => self.root.children = children,
         }
     }
     fn recalc_pos(&mut self, i:Parent){
@@ -468,7 +477,7 @@ impl Nodes{
             Parent::P(i) => {let Plane {children:c, direction:d, r, .. } = &mut self[i]; (std::mem::take(c), *d, *r)}
         };
 
-        for c in c.iter(){
+        for c in c.iter().filter(|x| !matches!(x, Nidx::P(_))){
             c.r_mut(self).x = r.x;
             c.r_mut(self).y = r.y;
             match d{
@@ -477,8 +486,34 @@ impl Nodes{
             }
         }
         for c in c.iter(){
-            if let Nidx::S(c) = c{
-                self.recalc_pos((*c).into());
+            let Nidx::P(c) = c else {continue};
+            let Plane {r:curr_r, align, anchor, ..} = &mut self[*c];
+            let x = match anchor.x{
+                Anchor::Offset(x) => x,
+                Anchor::Relative(x) => (x * r.w as f32) as u16,
+            } + r.x;
+            let x = x.min(r.x + r.w);
+            let y = match anchor.y{
+                Anchor::Offset(y) => y,
+                Anchor::Relative(y) => (y * r.h as f32) as u16,
+            } + r.y;
+            let y = y.min(r.y + r.h);
+            match align.x{
+                Alignment::Start => curr_r.x = x,
+                Alignment::End   => curr_r.x = x.saturating_sub(curr_r.w),
+                Alignment::Center => curr_r.x = x.saturating_sub(curr_r.w/2),
+            }
+            match align.y{
+                Alignment::Start => curr_r.y = y,
+                Alignment::End => curr_r.y = y.saturating_sub(curr_r.h),
+                Alignment::Center => curr_r.y = y.saturating_add(curr_r.h/2),
+            }
+        }
+        for c in c.iter(){
+            match *c{
+                Nidx::S(c) => self.recalc_pos(c.into()),
+                Nidx::P(c) => self.recalc_pos(c.into()),
+                Nidx::L(_) => {} 
             }
         }
         *i.mut_children(self) = c;
