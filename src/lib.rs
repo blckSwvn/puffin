@@ -5,7 +5,7 @@ mod builder;
 use std::io::{self, stdout};
 use std::time::Duration;
 pub use builder::*;
-use crossterm::event::EnableMouseCapture;
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::style::Attributes;
 pub use layout::{Rect, Direction, leaf, Bounds, Bound, Alignment, Alignments, Anchor, Anchors, FocusDirection};
 use layout::*;
@@ -132,7 +132,7 @@ impl<C, E> Ui<C, E>{
                 fn drop(&mut self) {
                     if !self.0.swap(true, Ordering::SeqCst){
                         let mut out = stdout();
-                        let _ = execute!(out, LeaveAlternateScreen, Show);
+                        let _ = execute!(out, LeaveAlternateScreen, DisableMouseCapture, Show);
                         let _ = disable_raw_mode();
                         let _ = out.flush();
                     }
