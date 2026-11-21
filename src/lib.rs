@@ -5,18 +5,17 @@ mod builder;
 use std::io::{self, stdout};
 use std::time::Duration;
 pub use builder::*;
-use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::style::Attributes;
 pub use layout::{Rect, Direction, leaf, Bounds, Bound, Alignment, Alignments, Anchor, Anchors, FocusDirection};
 use layout::*;
 use storage::*;
 use storage::{
     widgets::Widgets,
-    nodes::{Nodes, Sidx, Lidx, Nidx, Pidx, FOCUS}
+    nodes::{Nodes, Lidx, Nidx, Pidx, FOCUS}
 };
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
-    event::{Event, KeyEvent, MouseEvent},
+    event::{Event, KeyEvent},
     execute,
     terminal::{
         Clear,
@@ -39,7 +38,7 @@ pub trait Widget<C, E>{
     }
     fn behaviour(
         &mut self,
-        event: InputEvent,
+        event: KeyEvent,
         ctx: &mut C,
     ) -> Response<E>;
 }
@@ -87,14 +86,9 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering}
 };
-#[derive(Clone, Copy)]
-pub enum InputEvent{
-    Key(KeyEvent),
-    Mouse(MouseEvent),
-}
 impl<C, E> Ui<C, E>{
     pub fn run<F>(&mut self, ctx: &mut C, mut handler: F)->io::Result<()> where F:
-        FnMut(InputEvent, Response<E>, &mut C, &mut Ui<C, E>){
+        FnMut(KeyEvent, Response<E>, &mut C, &mut Ui<C, E>){
         fn guard()->io::Result<impl Drop>{
             let x = Arc::new(AtomicBool::new(false));
             fn install_panic_hook(restored:Arc<AtomicBool>){
@@ -119,7 +113,6 @@ impl<C, E> Ui<C, E>{
             if let Err(x) = execute!(
                 stdout(),
                 EnterAlternateScreen,
-                EnableMouseCapture,
                 Clear(ClearType::All),
                 MoveTo(0,0),
                 Hide
@@ -132,7 +125,7 @@ impl<C, E> Ui<C, E>{
                 fn drop(&mut self) {
                     if !self.0.swap(true, Ordering::SeqCst){
                         let mut out = stdout();
-                        let _ = execute!(out, LeaveAlternateScreen, DisableMouseCapture, Show);
+                        let _ = execute!(out, LeaveAlternateScreen, Show);
                         let _ = disable_raw_mode();
                         let _ = out.flush();
                     }
@@ -155,11 +148,11 @@ impl<C, E> Ui<C, E>{
                         self.curr = ScreenBuffer::new(w, h);
                         self.nodes.resize(&self.widgets, w, h);
                     }
-                    Event::Mouse(x) => {
-                        handler(InputEvent::Mouse(x))
-                    }
                     Event::Key(x) => {
-                        handler(InputEvent::Key(x))
+                        handler(x)
+                    }
+                    Event::Mouse(_) => {
+                        panic!("puffin does not and will not support mouse events")
                     }
                     _ => {}
                 }
