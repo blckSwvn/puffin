@@ -5,6 +5,7 @@ mod builder;
 use std::io::{self, stdout};
 use std::time::Duration;
 pub use builder::*;
+use crossterm::event::EnableMouseCapture;
 use crossterm::style::Attributes;
 pub use layout::{Rect, Direction, leaf, Bounds, Bound, Alignment, Alignments, Anchor, Anchors, FocusDirection};
 use layout::*;
@@ -118,6 +119,7 @@ impl<C, E> Ui<C, E>{
             if let Err(x) = execute!(
                 stdout(),
                 EnterAlternateScreen,
+                EnableMouseCapture,
                 Clear(ClearType::All),
                 MoveTo(0,0),
                 Hide
