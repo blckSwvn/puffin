@@ -4,7 +4,8 @@ mod layout;
 mod builder;
 use std::io::{self, stdout};
 use std::time::Duration;
-pub use builder::*;
+use builder::*;
+pub use builder::Builder;
 use crossterm::style::Attributes;
 pub use layout::{Rect, Direction, leaf, Bounds, Bound, Alignment, Alignments, Anchor, Anchors, FocusDirection};
 use layout::*;
@@ -171,7 +172,7 @@ impl<C, E> Ui<C, E>{
 pub fn background_default(rect:Rect, screen:&mut ScreenBuffer){
     rect.fill(" ".into(), Color::Black, Color::Black, Attributes::none(), screen);
 }
-pub fn new<C, E>(direction:Direction, build:impl FnOnce(Builder<'_, C, E, Empty>)->Builder<'_, C, E, NonEmpty>)->Ui<C, E>{
+pub fn new<C, E>(direction:Direction, build:impl FnOnce(Builder<'_, C, E, Empty, k::Root>)->Builder<'_, C, E, NonEmpty, k::Root>)->Ui<C, E>{
     let (w, h) = crossterm::terminal::size().unwrap();
     let mut widgets = Widgets::new();
     let mut puffin = Ui{
@@ -182,7 +183,7 @@ pub fn new<C, E>(direction:Direction, build:impl FnOnce(Builder<'_, C, E, Empty>
         curr: ScreenBuffer::new(w, h),
         quit: false,
     };
-    build(Builder::new(&mut puffin.nodes, &mut puffin.widgets));
+    build(Builder::new(&mut puffin.nodes,&mut puffin.widgets));
     puffin.nodes.recalc(&puffin.widgets, Parent::R);
     puffin
 } 

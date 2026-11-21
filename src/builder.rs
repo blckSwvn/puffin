@@ -1,17 +1,23 @@
 use super::*;
 use std::marker::PhantomData;
-pub struct Builder<'a, C, E, T>{
+pub struct Builder<'a, C, E, S, K>{
     nodes: &'a mut Nodes,
     widgets: &'a mut Widgets<C, E>,
     parent:Parent,
-    marker:PhantomData<fn()->T>,
+    marker:PhantomData<fn()->(S, K)>,
+}
+
+pub mod k{
+    pub struct Plane;
+    pub struct Split;
+    pub struct Root;
 }
 
 pub struct Empty;
 pub struct NonEmpty;
 
-impl <'a, C, E, T> Builder<'a, C, E, T>{
-    pub fn add(self, w:impl Widget<C, E> + 'static)->Builder<'a, C, E, NonEmpty>{
+impl <'a, C, E, S, K> Builder<'a, C, E, S, K>{
+    pub fn add(self, w:impl Widget<C, E> + 'static)->Builder<'a, C, E, NonEmpty, K>{
         add(self.nodes, self.widgets, self.parent, w);
         Builder{nodes:self.nodes, widgets:self.widgets, parent:self.parent, marker:PhantomData}
     }
@@ -23,31 +29,29 @@ impl <'a, C, E, T> Builder<'a, C, E, T>{
         } = bg;
         self
     }
-    pub fn vertical<B>(self, build:B)->Builder<'a, C, E, NonEmpty>
-        where B: FnOnce(Builder<'a, C, E, T>)->Builder<'a, C, E, NonEmpty>{
+    pub fn vertical<B>(self, build:B)->Builder<'a, C, E, NonEmpty, k::Split>
+        where B: FnOnce(Builder<'a, C, E, NonEmpty, K>)->Builder<'a, C, E, NonEmpty, k::Split>{
             let parent = add_empty(self.nodes, Direction::Vertical, self.parent, background_default, Bounds::default());
             build(Builder{nodes: self.nodes, widgets: self.widgets, parent, marker:PhantomData}).finish()
     }
-    pub fn horizontal<B>(self, build:B)->Builder<'a, C, E, NonEmpty>
-        where B: FnOnce(Builder<'a, C, E, T>)->Builder<'a, C, E, NonEmpty>{
+    pub fn horizontal<B>(self, build:B)->Builder<'a, C, E, NonEmpty, k::Split>
+        where B: FnOnce(Builder<'a, C, E, NonEmpty, K>)->Builder<'a, C, E, NonEmpty, k::Split>{
             let parent = add_empty(self.nodes, Direction::Horizontal, self.parent, background_default, Bounds::default());
             build(Builder{nodes: self.nodes, widgets: self.widgets, parent, marker:PhantomData}).finish()
     }
     pub fn plane<B>(
         self,
-        align: Alignments,
-        anchor: Anchors,
         z: u16,
         build: B,
-    ) -> Builder<'a, C, E, NonEmpty>
+    ) -> Builder<'a, C, E, NonEmpty, k::Plane>
     where
-        B: FnOnce(Builder<'a, C, E, Empty>) -> Builder<'a, C, E, NonEmpty>,
+        B: FnOnce(Builder<'a, C, E, Empty, k::Plane>) -> Builder<'a, C, E, NonEmpty, k::Plane>,
     {
         let parent = add_plane(
             self.nodes,
             self.parent,
-            align,
-            anchor,
+            Alignments::default(),
+            Anchors::default(),
             z,
         );
         build(Builder {
@@ -58,7 +62,7 @@ impl <'a, C, E, T> Builder<'a, C, E, T>{
         }).finish()
     }
 }
-impl<'a, C, E> Builder<'a, C, E, Empty>{
+impl<'a, C, E, K> Builder<'a, C, E, Empty, K>{
     pub fn bounds(self, bounds:Bounds)->Self{
         match self.parent{
             Parent::R => {}
@@ -67,14 +71,27 @@ impl<'a, C, E> Builder<'a, C, E, Empty>{
         }
         self
     }
-    pub fn new(nodes:&'a mut Nodes, widgets:&'a mut Widgets<C, E>)->Builder<'a, C, E, Empty>{
+}
+impl<'a, C, E> Builder<'a, C, E, Empty, k::Root>{
+    pub fn new(nodes:&'a mut Nodes, widgets:&'a mut Widgets<C, E>)->Builder<'a, C, E, Empty, k::Root>{
         Builder{ nodes, widgets, parent: Parent::R, marker:PhantomData}
     }
 }
-
-impl<'a, C, E> Builder<'a, C, E, NonEmpty>{
+impl<'a, C, E, K> Builder<'a, C, E, NonEmpty, K>{
     fn finish(self)->Self{
         self.nodes.propegate_fit(self.widgets, self.parent);
+        self
+    }
+}
+impl<'a, C, E> Builder<'a, C, E, NonEmpty, k::Plane>{
+    pub fn align(self, align:Alignments)->Self{
+        let Parent::P(p) = self.parent else{unreachable!()};
+        self.nodes[p].align = align;
+        self
+    }
+    pub fn anchors(self, anchors:Anchors)->Self{
+        let Parent::P(p) = self.parent else{unreachable!()};
+        self.nodes[p].anchor = anchors;
         self
     }
 }
@@ -122,4 +139,25 @@ fn add_plane(
     p.mut_children(ns).push(i.into());
 
     i.into()
+}
+
+impl Default for Alignments{
+    fn default() -> Self {
+        Self { x: Alignment::default(), y: Alignment::default()}
+    }
+}
+impl Default for Alignment{
+    fn default() -> Self {
+        Self::Start
+    }
+}
+impl Default for Anchors{
+    fn default() -> Self {
+        Self { x: Anchor::default(), y: Anchor::default() }
+    }
+}
+impl Default for Anchor{
+    fn default() -> Self {
+        Self::Relative2Parent(0.0)
+    }
 }
