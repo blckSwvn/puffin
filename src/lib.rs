@@ -12,7 +12,7 @@ use layout::*;
 use storage::*;
 use storage::{
     widgets::Widgets,
-    nodes::{Nodes, Lidx, Nidx, Pidx, FOCUS}
+    nodes::{Nodes, Sidx, Lidx, Nidx, Pidx, FOCUS}
 };
 use crossterm::{
     cursor::{Hide, MoveTo, Show},

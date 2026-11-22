@@ -1,55 +1,62 @@
 use super::*;
 use std::marker::PhantomData;
-pub struct Builder<'a, C, E, S, K>{
+pub struct Builder<'a, C, E, S, K: Into<Parent> + Copy>{
     nodes: &'a mut Nodes,
     widgets: &'a mut Widgets<C, E>,
-    parent:Parent,
-    marker:PhantomData<fn()->(S, K)>,
+    k:K,
+    marker:PhantomData<fn()->S>,
 }
 
 pub mod k{
-    pub struct Plane;
-    pub struct Split;
+    #[derive(Clone, Copy)]
     pub struct Root;
+    impl From<Root> for super::Parent{
+        fn from(_: Root) -> Self {
+            Self::R
+        }
+    }
 }
 
 pub struct Empty;
 pub struct NonEmpty;
 
-impl <'a, C, E, S, K> Builder<'a, C, E, S, K>{
+impl <'a, C, E, S, K: Into<Parent> + Copy> Builder<'a, C, E, S, K>{
     pub fn add(self, w:impl Widget<C, E> + 'static)->Builder<'a, C, E, NonEmpty, K>{
-        add(self.nodes, self.widgets, self.parent, w);
-        Builder{nodes:self.nodes, widgets:self.widgets, parent:self.parent, marker:PhantomData}
+        add(self.nodes, self.widgets, self.k, w);
+        Builder{nodes:self.nodes, widgets:self.widgets, k:self.k, marker:PhantomData}
     }
     pub fn background(self, bg:Background)->Self{
-        *match self.parent{
+        *match self.k.into(){
             Parent::R => &mut self.nodes.root.background,
             Parent::S(x) => &mut self.nodes[x].background,
             Parent::P(x) => &mut self.nodes[x].background,
         } = bg;
         self
     }
-    pub fn vertical<B>(self, build:B)->Builder<'a, C, E, NonEmpty, k::Split>
-        where B: FnOnce(Builder<'a, C, E, Empty, K>)->Builder<'a, C, E, NonEmpty, k::Split>{
-            let parent = add_empty(self.nodes, Direction::Vertical, self.parent, background_default, Bounds::default());
-            build(Builder{nodes: self.nodes, widgets: self.widgets, parent, marker:PhantomData}).finish()
+    fn direction<B>(self, d:Direction, build:B)->Builder<'a, C, E, NonEmpty, Sidx>
+        where B: FnOnce(Builder<'a, C, E, Empty, Sidx>)->Builder<'a, C, E, NonEmpty, Sidx>{
+            let k = add_empty(self.nodes, d, self.k, background_default, Bounds::default());
+            build(Builder { nodes: self.nodes, widgets: self.widgets, k, marker: PhantomData })
     }
-    pub fn horizontal<B>(self, build:B)->Builder<'a, C, E, NonEmpty, k::Split>
-        where B: FnOnce(Builder<'a, C, E, Empty, K>)->Builder<'a, C, E, NonEmpty, k::Split>{
-            let parent = add_empty(self.nodes, Direction::Horizontal, self.parent, background_default, Bounds::default());
-            build(Builder{nodes: self.nodes, widgets: self.widgets, parent, marker:PhantomData}).finish()
+    pub fn vertical<B>(self, build:B)->Builder<'a, C, E, NonEmpty, Sidx>
+        where B: FnOnce(Builder<'a, C, E, Empty, Sidx>)->Builder<'a, C, E, NonEmpty, Sidx>{
+            self.direction(Direction::Vertical, build)
+    }
+    pub fn horizontal<B>(self, build:B)->Builder<'a, C, E, NonEmpty, Sidx>
+        where B: FnOnce(Builder<'a, C, E, Empty, Sidx>)->Builder<'a, C, E, NonEmpty, Sidx>{
+            self.direction(Direction::Horizontal, build)
     }
     pub fn plane<B>(
         self,
         z: u16,
         build: B,
-    ) -> Builder<'a, C, E, NonEmpty, k::Plane>
+    ) -> Builder<'a, C, E, NonEmpty, Pidx>
     where
-        B: FnOnce(Builder<'a, C, E, Empty, k::Plane>) -> Builder<'a, C, E, NonEmpty, k::Plane>,
+        B: FnOnce(Builder<'a, C, E, Empty, Pidx>) -> Builder<'a, C, E, NonEmpty, Pidx>,
     {
-        let parent = add_plane(
+        let k = add_plane(
             self.nodes,
-            self.parent,
+            self.k,
             Alignments::default(),
             Anchors::default(),
             z,
@@ -57,14 +64,14 @@ impl <'a, C, E, S, K> Builder<'a, C, E, S, K>{
         build(Builder {
             nodes: self.nodes,
             widgets: self.widgets,
-            parent,
+            k,
             marker: PhantomData,
         }).finish()
     }
 }
-impl<'a, C, E, K> Builder<'a, C, E, Empty, K>{
+impl<'a, C, E, K: Into<Parent> + Copy> Builder<'a, C, E, Empty, K>{
     pub fn bounds(self, bounds:Bounds)->Self{
-        match self.parent{
+        match self.k.into(){
             Parent::R => {}
             Parent::S(x) => self.nodes[x].b = bounds,
             Parent::P(x) => self.nodes[x].b = bounds,
@@ -74,35 +81,34 @@ impl<'a, C, E, K> Builder<'a, C, E, Empty, K>{
 }
 impl<'a, C, E> Builder<'a, C, E, Empty, k::Root>{
     pub fn new(nodes:&'a mut Nodes, widgets:&'a mut Widgets<C, E>)->Builder<'a, C, E, Empty, k::Root>{
-        Builder{ nodes, widgets, parent: Parent::R, marker:PhantomData}
+        Builder{ nodes, widgets, k: k::Root, marker:PhantomData}
     }
 }
-impl<'a, C, E, K> Builder<'a, C, E, NonEmpty, K>{
+impl<'a, C, E, K: Into<Parent> + Copy> Builder<'a, C, E, NonEmpty, K>{
     fn finish(self)->Self{
-        self.nodes.propegate_fit(self.widgets, self.parent);
+        self.nodes.propegate_fit(self.widgets, self.k.into());
         self
     }
 }
-impl<'a, C, E> Builder<'a, C, E, NonEmpty, k::Plane>{
+impl<'a, C, E> Builder<'a, C, E, NonEmpty, Pidx>{
     pub fn align(self, align:Alignments)->Self{
-        let Parent::P(p) = self.parent else{unreachable!()};
-        self.nodes[p].align = align;
+        self.nodes[self.k].align = align;
         self
     }
     pub fn anchors(self, anchors:Anchors)->Self{
-        let Parent::P(p) = self.parent else{unreachable!()};
-        self.nodes[p].anchor = anchors;
+        self.nodes[self.k].anchor = anchors;
         self
     }
 }
 
-fn add<C, E>(ns:&mut Nodes, ws:&mut Widgets<C, E>, p:Parent, w:impl Widget<C, E> + 'static)->Lidx{
+fn add<C, E, P:Into<Parent>>(ns:&mut Nodes, ws:&mut Widgets<C, E>, p:P, w:impl Widget<C, E> + 'static)->Lidx{
     let w = ws.insert(Box::new(w));
+    let p = p.into();
     let i = ns.l.insert(Leaf{parent:p, w, r:Rect::ZERO });
     p.mut_children(ns).push(i.into());
     i
 }
-fn add_empty(ns:&mut Nodes, direction:Direction, p:Parent, background:Background, b:Bounds)->Parent{
+fn add_empty<P:Into<Parent>+Copy>(ns:&mut Nodes, direction:Direction, p:P, background:Background, b:Bounds)->Sidx{
     let i = ns.s.insert(Split{
         parent:p.into(),
         focus:0,
@@ -112,19 +118,19 @@ fn add_empty(ns:&mut Nodes, direction:Direction, p:Parent, background:Background
         background,
         r:Rect::ZERO,
     });
-    p.mut_children(ns).push(i.into());
-    i.into()
+    p.into().mut_children(ns).push(i.into());
+    i
 }
 
-fn add_plane(
+fn add_plane<P: Into<Parent> + Copy>(
     ns: &mut Nodes,
-    p: Parent,
+    p:P,
     align: Alignments,
     anchor: Anchors,
     z: u16,
-) -> Parent {
+) -> Pidx{
     let i = ns.p.insert(Plane {
-        parent: p,
+        parent: p.into(),
         children: vec![],
         direction: Direction::Vertical,
         r: Rect::ZERO,
@@ -135,10 +141,8 @@ fn add_plane(
         focus: 0,
         z,
     });
-
-    p.mut_children(ns).push(i.into());
-
-    i.into()
+    p.into().mut_children(ns).push(i.into());
+    i
 }
 
 impl Default for Alignments{
