@@ -30,12 +30,12 @@ impl <'a, C, E, S, K> Builder<'a, C, E, S, K>{
         self
     }
     pub fn vertical<B>(self, build:B)->Builder<'a, C, E, NonEmpty, k::Split>
-        where B: FnOnce(Builder<'a, C, E, NonEmpty, K>)->Builder<'a, C, E, NonEmpty, k::Split>{
+        where B: FnOnce(Builder<'a, C, E, Empty, K>)->Builder<'a, C, E, NonEmpty, k::Split>{
             let parent = add_empty(self.nodes, Direction::Vertical, self.parent, background_default, Bounds::default());
             build(Builder{nodes: self.nodes, widgets: self.widgets, parent, marker:PhantomData}).finish()
     }
     pub fn horizontal<B>(self, build:B)->Builder<'a, C, E, NonEmpty, k::Split>
-        where B: FnOnce(Builder<'a, C, E, NonEmpty, K>)->Builder<'a, C, E, NonEmpty, k::Split>{
+        where B: FnOnce(Builder<'a, C, E, Empty, K>)->Builder<'a, C, E, NonEmpty, k::Split>{
             let parent = add_empty(self.nodes, Direction::Horizontal, self.parent, background_default, Bounds::default());
             build(Builder{nodes: self.nodes, widgets: self.widgets, parent, marker:PhantomData}).finish()
     }
