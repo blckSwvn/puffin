@@ -4,6 +4,7 @@ pub struct Builder<'a, C, E, S, K: Into<Parent> + Copy>{
     nodes: &'a mut Nodes,
     widgets: &'a mut Widgets<C, E>,
     k:K,
+    z:u16, //never lower than its parent
     marker:PhantomData<fn()->S>,
 }
 
@@ -23,7 +24,7 @@ pub struct NonEmpty;
 impl <'a, C, E, S, K: Into<Parent> + Copy> Builder<'a, C, E, S, K>{
     pub fn add(self, w:impl Widget<C, E> + 'static)->Builder<'a, C, E, NonEmpty, K>{
         add(self.nodes, self.widgets, self.k, w);
-        Builder{nodes:self.nodes, widgets:self.widgets, k:self.k, marker:PhantomData}
+        Builder{nodes:self.nodes, widgets:self.widgets, k:self.k, z:self.z, marker:PhantomData}
     }
     pub fn background(self, bg:Background)->Self{
         *match self.k.into(){
@@ -36,7 +37,7 @@ impl <'a, C, E, S, K: Into<Parent> + Copy> Builder<'a, C, E, S, K>{
     fn direction<B>(self, d:Direction, build:B)->Builder<'a, C, E, NonEmpty, Sidx>
         where B: FnOnce(Builder<'a, C, E, Empty, Sidx>)->Builder<'a, C, E, NonEmpty, Sidx>{
             let k = add_empty(self.nodes, d, self.k, background_default, Bounds::default());
-            build(Builder { nodes: self.nodes, widgets: self.widgets, k, marker: PhantomData })
+            build(Builder { nodes: self.nodes, widgets: self.widgets, k, z:self.z, marker: PhantomData })
     }
     pub fn vertical<B>(self, build:B)->Builder<'a, C, E, NonEmpty, Sidx>
         where B: FnOnce(Builder<'a, C, E, Empty, Sidx>)->Builder<'a, C, E, NonEmpty, Sidx>{
@@ -48,23 +49,19 @@ impl <'a, C, E, S, K: Into<Parent> + Copy> Builder<'a, C, E, S, K>{
     }
     pub fn plane<B>(
         self,
-        z: u16,
         build: B,
     ) -> Builder<'a, C, E, NonEmpty, Pidx>
     where
         B: FnOnce(Builder<'a, C, E, Empty, Pidx>) -> Builder<'a, C, E, NonEmpty, Pidx>,
     {
         let k = add_plane(
-            self.nodes,
-            self.k,
-            Alignments::default(),
-            Anchors::default(),
-            z,
+            self.nodes, self.k, Alignments::default(), Anchors::default(), self.z+1,
         );
         build(Builder {
             nodes: self.nodes,
             widgets: self.widgets,
             k,
+            z:self.z+1,
             marker: PhantomData,
         }).finish()
     }
@@ -80,8 +77,10 @@ impl<'a, C, E, K: Into<Parent> + Copy> Builder<'a, C, E, Empty, K>{
     }
 }
 impl<'a, C, E> Builder<'a, C, E, Empty, k::Root>{
-    pub fn new(nodes:&'a mut Nodes, widgets:&'a mut Widgets<C, E>)->Builder<'a, C, E, Empty, k::Root>{
-        Builder{ nodes, widgets, k: k::Root, marker:PhantomData}
+    pub fn new(
+        nodes:&'a mut Nodes, widgets:&'a mut Widgets<C, E>
+        )->Builder<'a, C, E, Empty, k::Root>{
+        Builder{ nodes, widgets, k: k::Root, z:0, marker:PhantomData}
     }
 }
 impl<'a, C, E, K: Into<Parent> + Copy> Builder<'a, C, E, NonEmpty, K>{
@@ -90,7 +89,7 @@ impl<'a, C, E, K: Into<Parent> + Copy> Builder<'a, C, E, NonEmpty, K>{
         self
     }
 }
-impl<'a, C, E> Builder<'a, C, E, NonEmpty, Pidx>{
+impl<'a, C, E> Builder<'a, C, E, Empty, Pidx>{
     pub fn align(self, align:Alignments)->Self{
         self.nodes[self.k].align = align;
         self
@@ -98,6 +97,17 @@ impl<'a, C, E> Builder<'a, C, E, NonEmpty, Pidx>{
     pub fn anchors(self, anchors:Anchors)->Self{
         self.nodes[self.k].anchor = anchors;
         self
+    }
+    pub fn z(self, z_off:u16)->Self{
+        let z = (self.z-1).checked_add(z_off).expect("z overflow");
+        self.nodes[self.k].z = z;
+        Self{
+            nodes: self.nodes,
+            widgets: self.widgets,
+            k:self.k,
+            z,
+            marker: PhantomData 
+        }
     }
 }
 
