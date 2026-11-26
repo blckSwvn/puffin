@@ -4,7 +4,7 @@ pub struct Builder<'a, C, E, S, K: Into<Parent> + Copy>{
     nodes: &'a mut Nodes,
     widgets: &'a mut Widgets<C, E>,
     k:K,
-    z:u16, //never lower than its parent
+    z:u16,
     marker:PhantomData<fn()->S>,
 }
 
@@ -100,7 +100,7 @@ impl<'a, C, E> Builder<'a, C, E, Empty, Pidx>{
     }
     pub fn z(self, z_off:u16)->Self{
         let z = (self.z-1).checked_add(z_off).expect("z overflow");
-        self.nodes[self.k].z = z;
+        self.nodes[self.k].z = self.z-1+z_off;
         Self{
             nodes: self.nodes,
             widgets: self.widgets,

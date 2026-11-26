@@ -261,7 +261,6 @@ use crate::storage::fvec;
             Self::P(value)
         }
     }
-
     impl Nidx{
         pub fn r(self, n:&Nodes)->Rect{
             match self{
@@ -328,8 +327,7 @@ use crate::storage::fvec;
             (new_l, s)
         }
     }
-    impl S{
-        pub fn add<C, E>(
+    impl S{ pub fn add<C, E>(
             ns:&mut Nodes,
             ws:&mut Widgets<C, E>,
             direction:Direction,
