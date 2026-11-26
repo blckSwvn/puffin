@@ -76,11 +76,18 @@ impl<'a, C, E, K: Into<Parent> + Copy> Builder<'a, C, E, Empty, K>{
         self
     }
 }
-impl<'a, C, E> Builder<'a, C, E, Empty, k::Root>{
+impl<'a, C, E, K: Into<Parent> + Copy> Builder<'a, C, E, Empty, K>{
     pub fn new(
-        nodes:&'a mut Nodes, widgets:&'a mut Widgets<C, E>
-        )->Builder<'a, C, E, Empty, k::Root>{
-        Builder{ nodes, widgets, k: k::Root, z:0, marker:PhantomData}
+        nodes:&'a mut Nodes, widgets:&'a mut Widgets<C, E>, mut p:Parent,
+        )->Builder<'a, C, E, Empty, K>{
+        let z = loop{
+            match p{
+                Parent::R => break 0,
+                Parent::S(i) => p = nodes[i].parent,
+                Parent::P(i) => break nodes[i].z,
+            } 
+        };
+        Builder{ nodes, widgets, k: p, z, marker:PhantomData}
     }
 }
 impl<'a, C, E, K: Into<Parent> + Copy> Builder<'a, C, E, NonEmpty, K>{

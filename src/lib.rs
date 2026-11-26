@@ -79,6 +79,11 @@ impl<C, E> Ui<C, E>{
         let p = self.nodes[self.focus].parent;
         Leaf::add(&mut self.nodes, &mut self.widgets, p, w);
     }
+    pub fn spawn<B>(&mut self, build:B)
+        where B: FnOnce(Builder<'_, C, E, Empty, Parent>)->Builder<'_, C, E, NonEmpty, Parent>{
+        let p = self.nodes[self.focus].parent;
+        build(Builder::new(&mut self.nodes, &mut self.widgets, p));
+    }
     pub fn quit(&mut self){
         self.quit = true;
     }
@@ -172,7 +177,7 @@ impl<C, E> Ui<C, E>{
 pub fn background_default(rect:Rect, screen:&mut ScreenBuffer){
     rect.fill(" ".into(), Color::Black, Color::Black, Attributes::none(), screen);
 }
-pub fn new<C, E>(direction:Direction, build:impl FnOnce(Builder<'_, C, E, Empty, k::Root>)->Builder<'_, C, E, NonEmpty, k::Root>)->Ui<C, E>{
+pub fn new<C, E>(direction:Direction, build:impl FnOnce(Builder<'_, C, E, Empty, Parent>)->Builder<'_, C, E, NonEmpty, Parent>)->Ui<C, E>{
     let (w, h) = crossterm::terminal::size().unwrap();
     let mut widgets = Widgets::new();
     let mut puffin = Ui{
@@ -183,7 +188,7 @@ pub fn new<C, E>(direction:Direction, build:impl FnOnce(Builder<'_, C, E, Empty,
         curr: ScreenBuffer::new(w, h),
         quit: false,
     };
-    build(Builder::new(&mut puffin.nodes,&mut puffin.widgets));
+    build(Builder::new(&mut puffin.nodes,&mut puffin.widgets, Parent::R));
     puffin.nodes.recalc(&puffin.widgets, Parent::R);
     puffin
 } 
