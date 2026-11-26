@@ -142,6 +142,15 @@ impl ScreenBuffer {
                     continue;
                 }
                 queue!(out, MoveTo(x, y))?;
+                if curr_attr != Some(new.a) {
+                    queue!(out, SetAttribute(Attribute::Reset))?;
+                    if !new.a.is_empty() {
+                        queue!(out, SetAttributes(new.a))?;
+                    }
+                    curr_attr = Some(new.a);
+                    curr_fg = None;
+                    curr_bg = None;
+                }
                 if curr_fg != Some(new.s.fg) {
                     queue!(out, SetForegroundColor(new.s.fg))?;
                     curr_fg = Some(new.s.fg);
@@ -149,15 +158,6 @@ impl ScreenBuffer {
                 if curr_bg != Some(new.s.bg) {
                     queue!(out, SetBackgroundColor(new.s.bg))?;
                     curr_bg = Some(new.s.bg);
-                }
-                if curr_attr != Some(new.a) {
-                    queue!(out, SetAttribute(Attribute::Reset))?;
-                    curr_fg = None;
-                    curr_bg = None;
-                    if !new.a.is_empty() {
-                        queue!(out, SetAttributes(new.a))?;
-                    }
-                    curr_attr = Some(new.a);
                 }
                 match &new.c {
                     ContKind::Grapheme(s) => {
