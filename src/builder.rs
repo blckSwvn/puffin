@@ -34,17 +34,17 @@ impl <'a, C, E, S, K: Into<Parent> + Copy> Builder<'a, C, E, S, K>{
         } = bg;
         self
     }
-    fn direction<B>(self, d:Direction, build:B)->Builder<'a, C, E, NonEmpty, Sidx>
-        where B: FnOnce(Builder<'a, C, E, Empty, Sidx>)->Builder<'a, C, E, NonEmpty, Sidx>{
-            let k = add_empty(self.nodes, d, self.k, background_default, Bounds::default());
+    fn direction<B>(self, d:Direction, build:B)->Builder<'a, C, E, NonEmpty, Parent>
+        where B: FnOnce(Builder<'a, C, E, Empty, Parent>)->Builder<'a, C, E, NonEmpty, Parent>{
+            let k = add_empty(self.nodes, d, self.k, background_default, Bounds::default()).into();
             build(Builder { nodes: self.nodes, widgets: self.widgets, k, z:self.z, marker: PhantomData })
     }
-    pub fn vertical<B>(self, build:B)->Builder<'a, C, E, NonEmpty, Sidx>
-        where B: FnOnce(Builder<'a, C, E, Empty, Sidx>)->Builder<'a, C, E, NonEmpty, Sidx>{
+    pub fn vertical<B>(self, build:B)->Builder<'a, C, E, NonEmpty, Parent>
+        where B: FnOnce(Builder<'a, C, E, Empty, Parent>)->Builder<'a, C, E, NonEmpty, Parent>{
             self.direction(Direction::Vertical, build)
     }
-    pub fn horizontal<B>(self, build:B)->Builder<'a, C, E, NonEmpty, Sidx>
-        where B: FnOnce(Builder<'a, C, E, Empty, Sidx>)->Builder<'a, C, E, NonEmpty, Sidx>{
+    pub fn horizontal<B>(self, build:B)->Builder<'a, C, E, NonEmpty, Parent>
+        where B: FnOnce(Builder<'a, C, E, Empty, Parent>)->Builder<'a, C, E, NonEmpty, Parent>{
             self.direction(Direction::Horizontal, build)
     }
     pub fn plane<B>(
@@ -76,10 +76,10 @@ impl<'a, C, E, K: Into<Parent> + Copy> Builder<'a, C, E, Empty, K>{
         self
     }
 }
-impl<'a, C, E, K: Into<Parent> + Copy> Builder<'a, C, E, Empty, K>{
+impl<'a, C, E> Builder<'a, C, E, Empty, Parent>{
     pub fn new(
         nodes:&'a mut Nodes, widgets:&'a mut Widgets<C, E>, mut p:Parent,
-        )->Builder<'a, C, E, Empty, K>{
+        )->Builder<'a, C, E, Empty, Parent>{
         let z = loop{
             match p{
                 Parent::R => break 0,

@@ -79,10 +79,14 @@ impl<C, E> Ui<C, E>{
         let p = self.nodes[self.focus].parent;
         Leaf::add(&mut self.nodes, &mut self.widgets, p, w);
     }
-    pub fn spawn<B>(&mut self, build:B)
-        where B: FnOnce(Builder<'_, C, E, Empty, Parent>)->Builder<'_, C, E, NonEmpty, Parent>{
+    pub fn spawn<S, K, B>(&mut self, build:B)
+        where
+            K: Into<Parent> + Copy,
+            B: FnOnce(Builder<'_, C, E, Empty, Parent>)->Builder<'_, C, E, S, K>,
+    {
         let p = self.nodes[self.focus].parent;
         build(Builder::new(&mut self.nodes, &mut self.widgets, p));
+        self.nodes.recalc(&self.widgets, p);
     }
     pub fn quit(&mut self){
         self.quit = true;

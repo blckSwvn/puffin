@@ -14,10 +14,10 @@ pub mod leaf{
     }
     #[derive(Clone, Copy, PartialEq)]
     pub struct Bounds{
-        max_w:Bound,
-        min_w:Bound,
-        max_h:Bound,
-        min_h:Bound,
+        pub max_w:Bound,
+        pub min_w:Bound,
+        pub max_h:Bound,
+        pub min_h:Bound,
     }
     pub struct Leaf{
         pub parent: Parent,
