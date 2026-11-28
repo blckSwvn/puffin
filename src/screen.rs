@@ -76,7 +76,8 @@ use unicode_segmentation::UnicodeSegmentation;
 pub struct Screen{
     curr:Vec<Cell>,
     old:Vec<Cell>,
-    graphemes:Vec<Box<str>>,
+    graphemes:Vec<Arc<str>>,
+    lookup:HashMap<Arc<str>, u32>,
     w:u16,
     h:u16
 }
@@ -87,52 +88,64 @@ impl Screen{
             curr: vec![Cell::default(); (w*h) as usize],
             old:  vec![Cell::default(); (w*h) as usize],
             graphemes: vec![],
+            lookup: HashMap::new(),
             w, h
         }
     }
     fn clear(&mut self){
         self.curr.fill(Cell::default());
     }
-    pub fn set(
-        &mut self,
-        r: Rect,
-        x: u16,
-        y: u16,
-        s: &str,
-        fg: Color,
-        bg: Color,
-        a: Attributes,
-        
-    ) {
-        if r.w == 0 || r.h == 0 { return; }
-        if y < r.y || y >= r.bottom() || y >= self.h { return; }
-        let right = r.right().min(self.w);
-        let mut cx = x;
-        for grapheme in s.graphemes(true) {
-            let width = grapheme.width();
-            if width == 0 { continue; }
-            let width = width as usize;
-            if cx < r.x { continue; }
-            let end = cx as usize + width;
-            if cx >= right || end > right as usize {
-                break;
-            }
-            // Clear any existing grapheme overlapping the new one.
-            for col in cx..end as u16 {
-                self.clear_grapheme(col, y);
-            }
-            let idx = y as usize * self.w as usize + cx as usize;
-            let index = self.graphemes.len();
-            debug_assert!(index <= ContKind::MAX_INDEX as usize);
-            self.graphemes.push(grapheme.into());
-            self.curr[idx] = Cell::grapheme(index as u32, fg, bg, a);
-            for offset in 1..width {
-                let idx = y as usize * self.w as usize + cx as usize + offset;
-                self.curr[idx] = Cell::continuation(fg, bg);
-            }
-            cx = end as u16;
+    fn intern(&mut self, s:&str)->u32{
+        if let Some(&i) = self.lookup.get(s){
+            return i;
         }
+        let i = self.graphemes.len() as u32;
+        debug_assert!(i <= ContKind::MAX_INDEX);
+        let val:Arc<str> = Arc::from(s);
+        self.graphemes.push(val.clone());
+        self.lookup.insert(val, i);
+        i
     }
+pub fn set(
+    &mut self,
+    r: Rect,
+    x: u16,
+    y: u16,
+    s: &str,
+    fg: Color,
+    bg: Color,
+    a: Attributes,
+) {
+    if r.w == 0 || r.h == 0 { return; }
+    if y < r.y || y >= r.bottom() || y >= self.h { return; }
+    let right = r.right().min(self.w);
+    let mut cx = x;
+    for grapheme in s.graphemes(true) {
+        let width = grapheme.width();
+        if width == 0 { continue; }
+        let width = width as usize;
+        if cx < r.x { continue; }
+        let end = cx as usize + width;
+        if cx >= right || end > right as usize {
+            break;
+        }
+        // Clear any existing grapheme overlapping the new one.
+        for col in cx..end as u16 {
+            self.clear_grapheme(col, y);
+        }
+        let index = self.intern(grapheme);
+        let idx = y as usize * self.w as usize + cx as usize;
+        self.curr[idx] = Cell::grapheme(index, fg, bg, a);
+        // Mark continuation cells for wide graphemes.
+        for offset in 1..width {
+            let idx = y as usize * self.w as usize
+                + cx as usize
+                + offset;
+            self.curr[idx] = Cell::continuation(fg, bg);
+        }
+        cx = end as u16;
+    }
+}
     fn clear_grapheme(&mut self, x: u16, y: u16) {
         if x >= self.w || y >= self.h { return; }
         let row_start = y as usize * self.w as usize;
