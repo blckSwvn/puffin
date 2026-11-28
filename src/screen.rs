@@ -9,13 +9,33 @@ use crossterm::{
 use std::io::stdout;
 pub const FG: Color = Color::White;
 pub const BG: Color = Color::Rgb { r: 0, g: 0, b: 0 };
-#[derive(Clone, PartialEq, Eq)]
-pub enum ContKind{
-    Empty,
-    Grapheme(String),
-    Continue,
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct ContKind(u32);
+impl ContKind{
+    const EMPTY: Self = Self(0);
+    const CONTINUE: Self = Self(1);
+    const TAG_MASK: u32 = 0b11;
+    const SHIFT: u32 = 2;
+    const MAX_INDEX: u32 = (1 << 30)-1;
+    fn grapheme(i:u32)->Self{
+        debug_assert!(i <= Self::MAX_INDEX);
+        Self((i << Self::SHIFT) | 0b10)
+    }
+    fn grapheme_index(self)->Option<u32>{
+        if self.0 & Self::TAG_MASK == 0b10{
+            Some(self.0 >> 2)
+        }else{
+            None
+        }
+    }
+    fn is_empty(self)->bool{
+        self == Self::EMPTY
+    }
+    fn is_continue(self)->bool{
+        self == Self::CONTINUE
+    }
 }
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct Cell {
     c: ContKind,
     s: Colors,
@@ -29,23 +49,23 @@ struct Colors{
 impl Default for Cell {
     fn default() -> Self {
         Self {
-            c: ContKind::Empty,
+            c: ContKind::EMPTY,
             s: Colors { fg: FG, bg: BG },
             a: Attributes::none()
         }
     }
 }
 impl Cell{
-    fn grapheme(s:&str, fg:Color, bg:Color, a:Attributes)->Self{
+    fn grapheme(i: u32, fg:Color, bg:Color, a:Attributes)->Self{
         Self{
-            c:ContKind::Grapheme(s.into()),
+            c:ContKind::grapheme(i),
             s:Colors { fg, bg },
             a,
         }
     }
     fn continuation(fg:Color, bg:Color)->Self{
         Self{
-            c:ContKind::Continue,
+            c:ContKind::CONTINUE,
             s:Colors { fg, bg },
             a:Attributes::none()
         }
@@ -53,6 +73,7 @@ impl Cell{
 }
 pub struct ScreenBuffer {
     cells: Vec<Cell>,
+    graphemes:Vec<Box<str>>,
     pub w: u16,
     pub h: u16,
 }
@@ -61,7 +82,11 @@ use unicode_width::UnicodeWidthStr;
 use unicode_segmentation::UnicodeSegmentation;
 impl ScreenBuffer {
     pub fn new(w:u16, h:u16)->Self{
-        Self { cells: vec![Cell::default(); (w*h) as usize], w, h}
+        Self {
+            cells: vec![Cell::default(); (w*h) as usize],
+            graphemes:vec![],
+            w, h,
+        }
     }
     fn clear_buffer(&mut self) {
         self.cells.fill(Cell::default())
@@ -94,7 +119,10 @@ impl ScreenBuffer {
                 self.clear_grapheme(col, y);
             }
             let idx = y as usize * self.w as usize + cx as usize;
-            self.cells[idx] = Cell::grapheme(grapheme, fg, bg, a);
+            let index = self.graphemes.len();
+            debug_assert!(index <= ContKind::MAX_INDEX as usize);
+            self.graphemes.push(grapheme.into());
+            self.cells[idx] = Cell::grapheme(index as u32, fg, bg, a);
             for offset in 1..width {
                 let idx = y as usize * self.w as usize + cx as usize + offset;
                 self.cells[idx] = Cell::continuation(fg, bg);
@@ -108,16 +136,21 @@ impl ScreenBuffer {
         let mut start_x = x;
         while start_x > 0 {
             let idx = row_start + start_x as usize;
-            match self.cells[idx].c {
-                ContKind::Continue => start_x -= 1,
-                ContKind::Grapheme(_) | ContKind::Empty => break,
+            if self.cells[idx].c.is_continue() {
+                start_x -= 1;
+            } else {
+                break;
             }
         }
         let idx = row_start + start_x as usize;
-        let width = match &self.cells[idx].c {
-            ContKind::Grapheme(s) => s.width(),
-            _ => return,
+        let Some(grapheme_index) = self.cells[idx].c.grapheme_index() else {
+            return;
         };
+        let Some(grapheme) = self.graphemes.get(grapheme_index as usize) else {
+            return;
+        };
+        let width = grapheme.width();
+
         for offset in 0..width {
             let idx = row_start + start_x as usize + offset;
             self.cells[idx] = Cell::default();
@@ -137,7 +170,7 @@ impl ScreenBuffer {
                     x += 1;
                     continue;
                 }
-                if matches!(new.c, ContKind::Continue) {
+                if new.c.is_continue(){
                     x += 1;
                     continue;
                 }
@@ -159,23 +192,41 @@ impl ScreenBuffer {
                     queue!(out, SetBackgroundColor(new.s.bg))?;
                     curr_bg = Some(new.s.bg);
                 }
-                match &new.c {
-                    ContKind::Grapheme(s) => {
-                        queue!(out, Print(s))?;
-                        x += s.width() as u16;
-                    }
-                    ContKind::Empty => {
-                        queue!(out, Print(" "))?;
-                        x += 1;
-                    }
-                    ContKind::Continue => unreachable!(),
+                if let Some(index) = new.c.grapheme_index() {
+                    let grapheme = &self.graphemes[index as usize];
+                    queue!(out, Print(grapheme))?;
+                    x += grapheme.width() as u16;
+                } else {
+                    queue!(out, Print(" "))?;
+                    x += 1;
                 }
             }
         }
         queue!(out, ResetColor, SetAttribute(Attribute::Reset))?;
         out.flush()?;
-        std::mem::swap(&mut self.cells, &mut old.cells);
+        std::mem::swap(self, old);
         self.clear_buffer();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn print_memory_sizes() {
+        println!("ContKind: {} bytes", std::mem::size_of::<ContKind>());
+        println!("Cell: {} bytes", std::mem::size_of::<Cell>());
+        println!("Colors: {} bytes", std::mem::size_of::<Colors>());
+        println!("Attributes: {} bytes", std::mem::size_of::<Attributes>());
+        println!("Color: {} bytes", std::mem::size_of::<Color>());
+        println!("Box<str>: {} bytes", std::mem::size_of::<Box<str>>());
+
+        let (w, h) = (188u16, 48u16);
+        let cells = w as usize * h as usize;
+
+        println!("\nFor a {w}x{h} terminal ({cells} cells):");
+        println!("One buffer: {} bytes", cells * std::mem::size_of::<Cell>());
+        println!("Two buffers: {} bytes", cells * 2 * std::mem::size_of::<Cell>());
     }
 }
