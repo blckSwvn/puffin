@@ -30,10 +30,10 @@ pub use crossterm::{
     event::KeyCode,
     style::Color,
 };
-pub use screen::ScreenBuffer;
+pub use screen::Screen;
 
 pub trait Widget<C, E>{
-    fn draw(&mut self, r:Rect, screen:&mut ScreenBuffer, focused:bool);
+    fn draw(&mut self, r:Rect, screen:&mut Screen, focused:bool);
     fn bounds(&self)->leaf::Bounds{
         leaf::Bounds::default()
     }
@@ -44,13 +44,12 @@ pub trait Widget<C, E>{
     ) -> Response<E>;
 }
 
-pub type Background = fn(Rect, &mut ScreenBuffer);
+pub type Background = fn(Rect, &mut Screen);
 pub struct Ui<C, E>{
     pub focus:Lidx,
     widgets:Widgets<C, E>,
     nodes:Nodes,
-    old:ScreenBuffer,
-    curr:ScreenBuffer,
+    screen:Screen,
     quit:bool,
 }
 pub enum Response<Cmd>{
@@ -154,8 +153,7 @@ impl<C, E> Ui<C, E>{
                 };
                 match event{
                     Event::Resize(w, h) => {
-                        self.old = ScreenBuffer::new(w, h);
-                        self.curr = ScreenBuffer::new(w, h);
+                        self.screen = Screen::new(w, h);
                         self.nodes.resize(&self.widgets, w, h);
                     }
                     Event::Key(x) => {
@@ -172,13 +170,13 @@ impl<C, E> Ui<C, E>{
         Ok(())
     }
     fn draw(&mut self)->std::io::Result<()>{
-        sketch(&self.nodes, &mut self.widgets, self.focus, &mut self.curr);
-        self.curr.draw(&mut self.old)?;
+        sketch(&self.nodes, &mut self.widgets, self.focus, &mut self.screen);
+        self.screen.draw()?;
         Ok(())
     }
 }
 
-pub fn background_default(rect:Rect, screen:&mut ScreenBuffer){
+pub fn background_default(rect:Rect, screen:&mut Screen){
     rect.fill(" ".into(), Color::Black, Color::Black, Attributes::none(), screen);
 }
 pub fn new<C, E>(direction:Direction, build:impl FnOnce(Builder<'_, C, E, Empty, Parent>)->Builder<'_, C, E, NonEmpty, Parent>)->Ui<C, E>{
@@ -188,8 +186,7 @@ pub fn new<C, E>(direction:Direction, build:impl FnOnce(Builder<'_, C, E, Empty,
         focus:FOCUS,
         nodes: Nodes::new(w, h, &mut widgets, direction, background_default),
         widgets,
-        old: ScreenBuffer::new(w, h),
-        curr: ScreenBuffer::new(w, h),
+        screen: Screen::new(w, h),
         quit: false,
     };
     build(Builder::new(&mut puffin.nodes,&mut puffin.widgets, Parent::R));
@@ -201,14 +198,14 @@ pub fn sketch<Ctx, Cmd>(
     n: &Nodes,
     widgets: &mut Widgets<Ctx, Cmd>,
     focus: Lidx,
-    curr: &mut ScreenBuffer,
+    curr: &mut Screen,
 ) {
     fn draw_content<Ctx, Cmd>(
         n: &Nodes,
         w: &mut Widgets<Ctx, Cmd>,
         idx: Nidx,
         focus: Lidx,
-        screen: &mut ScreenBuffer,
+        screen: &mut Screen,
         planes: &mut Vec<Pidx>,
     ) {
         match idx {
@@ -235,7 +232,7 @@ pub fn sketch<Ctx, Cmd>(
         w: &mut Widgets<Ctx, Cmd>,
         mut planes: Vec<Pidx>,
         focus: Lidx,
-        screen: &mut ScreenBuffer,
+        screen: &mut Screen,
     ) {
         planes.sort_unstable_by_key(|&i| n[i].z);
 

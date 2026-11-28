@@ -1,5 +1,5 @@
 pub enum FocusDirection { Left, Right, Up, Down, }
-use crate::{Background, ScreenBuffer, Widget, nodes::Nodes, storage::nodes::{Lidx, Nidx, Sidx, Pidx}, widgets::Widgets
+use crate::{Background, Screen, Widget, nodes::Nodes, storage::nodes::{Lidx, Nidx, Sidx, Pidx}, widgets::Widgets
 };
 
 pub mod leaf{
@@ -278,7 +278,7 @@ impl Rect {
     pub fn right(self) -> u16 {
         self.x + self.w
     }
-    pub fn fill(self, c:&str, fg:Color, bg:Color, a:Attributes, screen:&mut ScreenBuffer){
+    pub fn fill(self, c:&str, fg:Color, bg:Color, a:Attributes, screen:&mut Screen){
         for x in self.x..self.right(){
             for y in self.y..self.bottom(){
                 screen.set(self, x, y, c, fg, bg, a);

@@ -6,7 +6,7 @@ use crossterm::{
         Attribute, Attributes, Color, Print, ResetColor, SetAttribute, SetAttributes, SetBackgroundColor, SetForegroundColor
     },
 };
-use std::io::stdout;
+use std::{collections::HashMap, io::stdout, sync::Arc};
 pub const FG: Color = Color::White;
 pub const BG: Color = Color::Rgb { r: 0, g: 0, b: 0 };
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -71,25 +71,27 @@ impl Cell{
         }
     }
 }
-pub struct ScreenBuffer {
-    cells: Vec<Cell>,
-    graphemes:Vec<Box<str>>,
-    pub w: u16,
-    pub h: u16,
-}
-
 use unicode_width::UnicodeWidthStr;
 use unicode_segmentation::UnicodeSegmentation;
-impl ScreenBuffer {
+pub struct Screen{
+    curr:Vec<Cell>,
+    old:Vec<Cell>,
+    graphemes:Vec<Box<str>>,
+    w:u16,
+    h:u16
+}
+
+impl Screen{
     pub fn new(w:u16, h:u16)->Self{
         Self {
-            cells: vec![Cell::default(); (w*h) as usize],
-            graphemes:vec![],
-            w, h,
+            curr: vec![Cell::default(); (w*h) as usize],
+            old:  vec![Cell::default(); (w*h) as usize],
+            graphemes: vec![],
+            w, h
         }
     }
-    fn clear_buffer(&mut self) {
-        self.cells.fill(Cell::default())
+    fn clear(&mut self){
+        self.curr.fill(Cell::default());
     }
     pub fn set(
         &mut self,
@@ -100,6 +102,7 @@ impl ScreenBuffer {
         fg: Color,
         bg: Color,
         a: Attributes,
+        
     ) {
         if r.w == 0 || r.h == 0 { return; }
         if y < r.y || y >= r.bottom() || y >= self.h { return; }
@@ -122,10 +125,10 @@ impl ScreenBuffer {
             let index = self.graphemes.len();
             debug_assert!(index <= ContKind::MAX_INDEX as usize);
             self.graphemes.push(grapheme.into());
-            self.cells[idx] = Cell::grapheme(index as u32, fg, bg, a);
+            self.curr[idx] = Cell::grapheme(index as u32, fg, bg, a);
             for offset in 1..width {
                 let idx = y as usize * self.w as usize + cx as usize + offset;
-                self.cells[idx] = Cell::continuation(fg, bg);
+                self.curr[idx] = Cell::continuation(fg, bg);
             }
             cx = end as u16;
         }
@@ -136,14 +139,14 @@ impl ScreenBuffer {
         let mut start_x = x;
         while start_x > 0 {
             let idx = row_start + start_x as usize;
-            if self.cells[idx].c.is_continue() {
+            if self.curr[idx].c.is_continue() {
                 start_x -= 1;
             } else {
                 break;
             }
         }
         let idx = row_start + start_x as usize;
-        let Some(grapheme_index) = self.cells[idx].c.grapheme_index() else {
+        let Some(grapheme_index) = self.curr[idx].c.grapheme_index() else {
             return;
         };
         let Some(grapheme) = self.graphemes.get(grapheme_index as usize) else {
@@ -153,10 +156,10 @@ impl ScreenBuffer {
 
         for offset in 0..width {
             let idx = row_start + start_x as usize + offset;
-            self.cells[idx] = Cell::default();
+            self.curr[idx] = Cell::default();
         }
     }
-    pub fn draw(&mut self, old: &mut ScreenBuffer) -> std::io::Result<()> {
+    pub fn draw(&mut self) -> std::io::Result<()> {
         use std::io::Write;
         let mut out = stdout().lock();
         let (mut curr_fg, mut curr_bg, mut curr_attr) = (None, None, None);
@@ -164,8 +167,8 @@ impl ScreenBuffer {
             let mut x = 0;
             while x < self.w {
                 let idx = y as usize * self.w as usize + x as usize;
-                let new = &self.cells[idx];
-                let prev = &old.cells[idx];
+                let new = &self.curr[idx];
+                let prev = &self.old[idx];
                 if new == prev {
                     x += 1;
                     continue;
@@ -204,8 +207,8 @@ impl ScreenBuffer {
         }
         queue!(out, ResetColor, SetAttribute(Attribute::Reset))?;
         out.flush()?;
-        std::mem::swap(self, old);
-        self.clear_buffer();
+        std::mem::swap(&mut self.curr, &mut self.old);
+        self.clear();
         Ok(())
     }
 }
