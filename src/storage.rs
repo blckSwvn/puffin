@@ -3,30 +3,21 @@ mod fvec{ //freelist vec
     pub struct Idx<T>{
         i:u16,
         m:PhantomData<fn()->T>,
-        #[cfg(debug_assertions)]
-        generation:u16,
+        generation:u32,
     }
     impl<T> Idx<T>{
         //shall only be used for ROOT and initial focus
         pub const fn new(i:u16)->Self{
             Self{
                 i, m:PhantomData,
-                #[cfg(debug_assertions)]
                 generation:0,
             } 
         }
     }
     impl<T> PartialEq for Idx<T>{
         fn eq(&self, other: &Self) -> bool {
-            self.i == other.i
-            && {
-                #[cfg(debug_assertions)]{
-                    self.generation == other.generation
-                }
-                #[cfg(not(debug_assertions))]{
-                    true
-                }
-            }
+            self.i == other.i &&
+            self.generation == other.generation
         }
     }
     impl<T> Eq for Idx<T>{}
@@ -34,30 +25,28 @@ mod fvec{ //freelist vec
     impl<T> Clone for Idx<T>{ fn clone(&self)-> Self{ *self } }
 
     struct Slot<T>{
-        val:Option<T>,
-        #[cfg(debug_assertions)]
-        generation:u16,
+        val:MaybeUninit<T>,
+        generation:u32,
     }
     pub struct Fvec<T>{
         used:Vec<Slot<T>>,
         free:Vec<u16>,
     }
-    use std::ops::{Index, IndexMut};
+    use std::mem::MaybeUninit;
+use std::ops::{Index, IndexMut};
     impl<T> Index<Idx<T>> for Fvec<T>{
         type Output = T;
         fn index(&self, i:Idx<T>)->&T{
             let slot = &self.used[i.i as usize];
-            #[cfg(debug_assertions)]
             assert_eq!(slot.generation, i.generation, "Stale fvec index");
-            slot.val.as_ref().unwrap()
+            unsafe{slot.val.assume_init_ref()}
         }
     }
     impl<T> IndexMut<Idx<T>> for Fvec<T> {
         fn index_mut(&mut self, i:Idx<T>)->&mut T{
             let slot = &mut self.used[i.i as usize];
-            #[cfg(debug_assertions)]
             assert_eq!( slot.generation, i.generation, "Stale fvec index");
-            slot.val.as_mut().unwrap()
+            unsafe{slot.val.assume_init_mut()}
         }
     }
     impl<T> Fvec<T>{
@@ -65,37 +54,41 @@ mod fvec{ //freelist vec
         pub fn insert(&mut self, t:T)->Idx<T>{
             if let Some(i) = self.free.pop(){
                 let slot = &mut self.used[i as usize];
-                slot.val = Some(t);
+                slot.val.write(t);
                 Idx{
                     i,
-                    #[cfg(debug_assertions)]
                     generation:slot.generation,
                     m:PhantomData,
                 }
             }else{
                 let i = self.used.len();
                 self.used.push(Slot{
-                    val:Some(t),
-                    #[cfg(debug_assertions)]
+                    val: MaybeUninit::new(t),
                     generation:0,
                 });
                 Idx{
                     i:i as u16,
                     m:PhantomData,
-                    #[cfg(debug_assertions)]
                     generation:0
                 }
             }
         }
         pub fn remove(&mut self, i:Idx<T>)->T{
             let slot = &mut self.used[i.i as usize];
-            #[cfg(debug_assertions)]{
-                assert_eq!(slot.generation, i.generation, "Stale fvec index");
-                slot.generation = slot.generation.wrapping_add(1);
-            }
-            let val = slot.val.take().unwrap();
+            assert_eq!(slot.generation, i.generation, "Stale fvec index");
+            slot.generation = slot.generation.checked_add(1).expect("gen overflow");
+            let val = unsafe{slot.val.assume_init_read()};
             self.free.push(i.i);
             val
+        }
+    }
+    impl<T> Drop for Fvec<T>{
+        fn drop(&mut self){
+            for (i, slot) in self.used.iter_mut().enumerate(){
+                if !self.free.contains(&(i as u16)){
+                    unsafe{ slot.val.assume_init_drop();}
+                }
+            }
         }
     }
 }
